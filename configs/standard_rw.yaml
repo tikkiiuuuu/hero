@@ -1,0 +1,160 @@
+enemy_color: "red"
+# enemy_color: "blue"
+
+#####-----神经网络参数-----#####
+yolo_name: yolov5
+classify_model: assets/tiny_resnet.onnx
+yolo11_model_path: assets/yolo11.xml
+yolov8_model_path: assets/yolov8.xml
+yolov5_model_path: assets/yolov5.xml
+device: CPU
+min_confidence: 0.8
+use_traditional: true #是否使用传统方法矫正
+
+img_type: 0 #1是bayer加最近邻插值，0是只有双线性插值 
+#####-----ROI-----#####
+roi: 
+  x: 50
+  y: 50
+  width: 300
+  height: 300
+
+use_roi: true
+
+#####-----传统方法参数-----#####
+threshold: 150
+max_angle_error: 45 # degree
+min_lightbar_ratio: 1.5
+max_lightbar_ratio: 20
+min_lightbar_length: 8
+min_armor_ratio: 1
+max_armor_ratio: 5
+max_side_ratio: 1.5
+max_rectangular_error: 25 # degree
+
+#####-----tracker参数-----#####
+# min_detect_count: 5
+# max_temp_lost_count: 15
+# outpost_max_temp_lost_count: 75
+
+# yaw_variance: 4e-3
+# pitch_variance: 4e-3
+# distance_variance: 1
+# orientation_variance: 1
+
+# filter_type: ekf
+
+target_frame: odom
+max_armor_distance: 10.0
+sensor_time_offset: 0.0  #单位是s
+
+match_thre_distance: 200.0 #200.0
+match_thre_angle: 2.0 #2.0
+match_thre_distance_light: 60.0
+match_thre_angle_light: 0.1
+match_thre_length_light: 0.1
+
+
+tracker:
+      # 跟踪、丢失时间阈值（s）
+      track_thres: 0.05  #0.04
+      lost_thres: 0.5 #0.5
+      # 最大匹配误差
+      max_match_error: 200.0 #200.0
+      # 最大装甲板距离（m）
+      max_armor_distance: 20.0
+      # 自身高度（m）
+      self_height: 0.6 #如果在家则需要增加0.1作为补偿值
+
+      ekf:
+        # 过程噪声
+        sigma2_q_xyz: 0.001 #0.010
+        sigma2_q_yaw: 6.0  # 7.0 6.0 9.0
+        sigma2_q_r: 0.1
+        # 观测噪声
+        sigam2_r_u: 8 #8 10
+        sigam2_r_v: 8 #8 10 这里观测的确实应该写小一点吧
+    
+      ekf_outpost:
+        # 前哨站过程噪声
+        sigma2_q_xyz: 0.4
+        sigma2_q_yaw: 8.0
+        sigma2_q_r: 0.1
+        # 前哨站观测噪声
+        sigam2_r_u: 2.0
+        sigam2_r_v: 2.0
+
+shoot_offset: 5 #0
+ 
+#####-----aimer参数-----#####
+yaw_offset: -0.7 #-0.4 0.2 2.8# degree -2.5
+pitch_offset: -6 # degree-0.4  -0.8 -3  -4.3
+comming_angle: 55 # degree
+leaving_angle: 20 # degree
+decision_speed: 10 # rad/s
+high_speed_delay_time: 0.215 # 0.030s 高速状态下机械
+low_speed_delay_time: 0.215 #0.015 0.020 0.015 0.240s planner use this value 0.075
+comm_delay: 0.015  #电控通信延时
+
+#####-----shooter参数-----#####
+first_tolerance: 3 # 近距离射击容差，degree
+second_tolerance: 2 # 远距离射击容差，degree
+judge_distance: 2 #距离判断阈值
+auto_fire: true # 是否由自瞄控制射击
+
+camera_name: "hikrobot"
+exposure_ms: 0 # 2.8 3.0 3.2 2.8
+gain: 16.9 #16.9
+vid_pid: "2bdf:0001"
+
+#  1  0  0
+#  0  1  0
+#  0  0  1
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+# 重投影误差: 0.2418px
+camera_matrix: [1823.8958333451681, 0, 698.02192723889402, 0, 1816.7768411842724, 581.91094428921519, 0, 0, 1]
+distort_coeffs: [-0.082568675838535763, 0.22123402100441963, 0.0024047050188446767, -0.0015909831267328131, 0]
+
+# 相机同理想情况的偏角: yaw-1.66 pitch-4.54 roll3.27 degree
+# R_camera2gimbal: [0.024430440246985485, -0.080611311933352386, 0.99644617013550818, -0.99808537288090904, 0.05468712543801435, 0.028894753027214816, -0.056822020647943658, -0.99524425881273515, -0.079120940779126459]
+
+R_camera2gimbal: [0.0, 0.0, 1.0, -1.0, 0.0, 0.0, 0.0, -1.0, 0.0]
+t_camera2gimbal: [0.12192231901216317, 0.017597599909154871, 0.063821676594979157]
+
+#####-----cboard参数-----#####
+quaternion_canid: 0x100
+bullet_speed_canid: 0x101
+send_canid: 0xff
+can_interface: "can0"
+
+#####-----gimbal参数-----#####
+com_port: "/dev/gimbal"
+yaw_kp: 0
+yaw_kd: 0
+pitch_kp: 0
+pitch_kd: 0
+
+#####-----planner-----#####
+fire_thresh: 0.0000010 #0.010  不用了，解耦yaw，pitch
+yaw_fire_thresh: 0.0000035 # 0.035
+pitch_fire_thresh: 0.0000004 # 0.004 0.00008
+
+max_yaw_acc: 30 #50 70
+Q_yaw: [9e6, 0]  # 9e6 9e7 0
+R_yaw: [1]  #1
+
+max_pitch_acc: 10 #10 20
+Q_pitch: [9e6,0]  #9e5 9e6 0
+R_pitch: [5]  # 7 5
+max_yaw_vel: 12.56
+max_pitch_vel: 12.56 #12.56
+max_yaw_jerk: 10.0
+max_pitch_jerk: 10.0
+
+#####-----buff_detector参数-----#####
+model: "assets/yolo11_buff_int8.xml"
+
+#####-----buff_aimer参数-----#####
+fire_gap_time: 0.700   # s
+predict_time: 0.120     # s
