@@ -346,6 +346,11 @@ std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd &
         if (armor_num == 4 && i % 2 == 1) {
             r = state_x[10]; // r2
             z = state_x[9];  // za2
+        } else if (armor_num == 3) {
+            r = state_x[8];
+            z = state_x[4];
+            int circle_type[3] = {1,0,-1};
+            z += 0.1 * circle_type[(circle_index + i) % 3];
         } else {
             r = state_x[8];  // r1
             z = state_x[4];  // za1
@@ -503,10 +508,11 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   Eigen::VectorXd current_state = predict_state(tracker_state, initial_dt);
 
   ////获得整车中心并发送角度
-   Plan plan;
-   plan.yaw=tools::limit_rad(aim_from_state_2(current_state , armors_num , bullet_speed, circle_index)(0));
-   plan.pitch=aim_from_state_2(current_state , armors_num , bullet_speed, circle_index)(1);
-   plan.fire=false;
+  Plan plan{}; // 初始化全部置零防止野指针
+  plan.control = true;
+  plan.yaw = tools::limit_rad(aim_from_state_2(current_state, armors_num, bullet_speed, circle_index)(0));
+  plan.pitch = aim_from_state_2(current_state, armors_num, bullet_speed, circle_index)(1);
+  plan.fire = false;
 
 
    //判断开火时机
@@ -518,9 +524,7 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
 
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, target_z);
 
-  auto time_all=bullet_traj.fly_time + initial_dt;
-
-  current_state=predict_state(current_state,time_all);
+  current_state = predict_state(current_state, bullet_traj.fly_time);
   auto hit_armors = compute_armor_xyza(current_state, armors_num, circle_index);
 
 
@@ -545,7 +549,9 @@ for(int i= 0;i<armors_num;i++){
 
       double pitch_i = -armor_traj.pitch - pitch_offset_;
 
-      if ( is_converged && std::abs((plan.yaw-yaw_i< yaw_fire_thresh_ )) && (std::abs(plan.pitch-pitch_i< pitch_fire_thresh_)))
+      if (is_converged && 
+          std::abs(plan.yaw - yaw_i) < yaw_fire_thresh_ && 
+          std::abs(plan.pitch - pitch_i) < pitch_fire_thresh_)
       { plan.fire=true; }
 
     }
@@ -582,7 +588,8 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   // 3. 彻底推演出子弹命中时的车辆状态（添加了平移提前量）
   Eigen::VectorXd hit_state = predict_state(tracker_state, time_all);
 
-  Plan plan;
+  Plan plan{}; // 初始化置零
+  plan.control = true;
   plan.fire = false; // 默认不开火
 
   // 4. 调用 aim_from_state_2 瞄准整车中心（遵循整车中心策略）

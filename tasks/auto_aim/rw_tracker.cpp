@@ -363,9 +363,9 @@ void auto_aim::RWTracker::update(const std::list<Armor>& armors, std::list<Light
 
                     if(armor.name == ArmorName::outpost){
                         if(outpost_errcount == 1){
-                            circle_index = (circle_index - 1) % 3;
-                        }if(outpost_errcount == 2){
-                            circle_index = (circle_index - 2) % 3;
+                            circle_index = (circle_index - 1 + 3) % 3;
+                        } else if(outpost_errcount == 2){
+                            circle_index = (circle_index - 2 + 3) % 3;
                         }
                         outpost_errcount = 0;
                     }

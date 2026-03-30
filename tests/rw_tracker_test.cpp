@@ -113,7 +113,7 @@ int main(int argc, char* argv[]) {
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         data["dt"] = tools::delta_time(t2, t1);
 
-        bool is_spinning=rw_tracker.target_state[7]>1;
+        bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
 
         auto_aim::Plan plan;
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
@@ -254,12 +254,12 @@ int main(int argc, char* argv[]) {
         if (plan.yaw_vel > 2.5 ){plan.yaw_vel=2.5;};
         if (plan.yaw_vel < -2.5 ){plan.yaw_vel=-2.5;};
         if (plan.pitch_vel > 1.5){plan.pitch_vel=1.5;};
-        if (plan.pitch_vel < -1.5){plan.yaw_vel=-1.5;};
+        if (plan.pitch_vel < -1.5){plan.pitch_vel=-1.5;};
 
         if (plan.yaw_acc > 30 ){plan.yaw_acc=30;};
         if (plan.yaw_acc < -30 ){plan.yaw_acc=-30;};
         if (plan.pitch_acc > 20){plan.pitch_acc=20;};
-        if (plan.pitch_acc < -20){plan.yaw_acc=-20;};
+        if (plan.pitch_acc < -20){plan.pitch_acc=-20;};
 
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING
             || rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST)
