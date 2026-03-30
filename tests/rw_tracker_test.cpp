@@ -133,18 +133,20 @@ int main(int argc, char* argv[]) {
                 // 无论是否在缓冲期，都调用 planner.plan 更新内部状态
                 if(is_spinning){
                 plan = planner.plan_1(
-                rw_tracker.target_state,           
-                rw_tracker.tracked_armors_num,     
-                11.5,                              
-                tools::delta_time(t2, t));}
+                rw_tracker.target_state,
+                rw_tracker.tracked_armors_num,
+                11.5,
+                tools::delta_time(t2, t),
+                rw_tracker.getCircleIndex());}
 
                 else{
                 plan = planner.plan_2(
-                rw_tracker.target_state,           
-                rw_tracker.tracked_armors_num,     
-                11.5,                              
-                tools::delta_time(t2, t));
-                }           
+                rw_tracker.target_state,
+                rw_tracker.tracked_armors_num,
+                11.5,
+                tools::delta_time(t2, t),
+                rw_tracker.getCircleIndex());
+                }
             ;
                 plan.control=false;
                 plan.pitch=gimbal.state().pitch;
@@ -162,25 +164,27 @@ int main(int argc, char* argv[]) {
 
             else{
                 // plan = planner.plan_1(
-                // rw_tracker.target_state,           
-                // rw_tracker.tracked_armors_num,     
-                // 11.5,                              
-                // tools::delta_time(t2, t)           
+                // rw_tracker.target_state,
+                // rw_tracker.tracked_armors_num,
+                // 11.5,
+                // tools::delta_time(t2, t)
                 // );
                 if(is_spinning){
                 plan = planner.plan_1(
-                rw_tracker.target_state,           
-                rw_tracker.tracked_armors_num,     
-                11.5,                              
-                tools::delta_time(t2, t));}
+                rw_tracker.target_state,
+                rw_tracker.tracked_armors_num,
+                11.5,
+                tools::delta_time(t2, t),
+                rw_tracker.getCircleIndex());}
 
                 else{
                 plan = planner.plan_2(
-                rw_tracker.target_state,           
-                rw_tracker.tracked_armors_num,     
-                11.5,                              
-                tools::delta_time(t2, t));
-                } 
+                rw_tracker.target_state,
+                rw_tracker.tracked_armors_num,
+                11.5,
+                tools::delta_time(t2, t),
+                rw_tracker.getCircleIndex());
+                }
             } 
 
             // 在生成完 plan 后对连续两帧的 plan 进行差值限幅

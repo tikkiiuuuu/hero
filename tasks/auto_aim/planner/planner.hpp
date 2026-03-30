@@ -88,8 +88,8 @@ public:
   plan_with_ruckig(RWTracker::ShowTargetInterface& target, double bullet_speed, double send_time);
   Plan plan(const Eigen::VectorXd& tracker_state, int tracked_armors_num, double bullet_speed, double send_time);
 
-  Plan plan_1(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time);
-  Plan plan_2(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time);
+  Plan plan_1(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time, int circle_index = 0);
+  Plan plan_2(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time, int circle_index = 0);
 
   std::tuple<Trajectory, int,int>
   get_trajectory_with_jump_detection(Target& target, double yaw0, double bullet_speed);
@@ -131,9 +131,9 @@ public:
   Trajectory get_trajectory_from_state(const Eigen::VectorXd & target_state, int armor_num, double yaw0, double bullet_speed);
   Eigen::Matrix<double, 2, 1> aim_from_state(const Eigen::VectorXd & state_x, int armor_num, double bullet_speed);
 
-  Eigen::Matrix<double, 2, 1> aim_from_state_2(const Eigen::VectorXd & state_x, int armor_num, double bullet_speed);
+  Eigen::Matrix<double, 2, 1> aim_from_state_2(const Eigen::VectorXd & state_x, int armor_num, double bullet_speed, int circle_index = 0);
 
-  std::vector<Eigen::Vector4d> compute_armor_xyza(const Eigen::VectorXd & state_x, int armor_num) const;
+  std::vector<Eigen::Vector4d> compute_armor_xyza(const Eigen::VectorXd & state_x, int armor_num, int circle_index = 0) const;
   Eigen::VectorXd predict_state(const Eigen::VectorXd & current_state, double dt) const;
 
   ruckig::Ruckig<2> ruckig_yaw_pitch_ {DT};

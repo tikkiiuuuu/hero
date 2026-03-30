@@ -72,6 +72,7 @@ public:
     void drawResults(cv::Mat & img);
     void set_enemy_color(uint8_t enemycolor);
     ShowTargetInterface& get_interface();
+    int getCircleIndex() const { return circle_index; }  // 获取前哨站当前装甲板索引
 
     double dt_;//! 在图像回调中计算
 

@@ -332,7 +332,7 @@ Eigen::VectorXd Planner::predict_state(const Eigen::VectorXd & current_state, do
 //   return {armor_x, armor_y, armor_z};
 // }
 
-std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd & state_x, int armor_num) const
+std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd & state_x, int armor_num, int circle_index) const
 {
     std::vector<Eigen::Vector4d> res;
     double xc = state_x[0];
@@ -354,7 +354,7 @@ std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd &
         // 参考 rw_tracker.cpp 的转换逻辑：xc = xa - r * cos(yaw)  => xa = xc + r * cos(yaw)
         double armor_x = xc + r * std::cos(armor_theta);
         double armor_y = yc + r * std::sin(armor_theta);
-        
+
         res.push_back({armor_x, armor_y, z, armor_theta});
     }
     return res;
@@ -480,7 +480,7 @@ Trajectory Planner::get_trajectory_from_state(const Eigen::VectorXd & target_sta
     return traj;
 }
 
-Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time){
+Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time, int circle_index){
 
   bool is_spinning = std::abs(tracker_state[7]) > decision_speed_;
   double delay_time = is_spinning ? high_speed_delay_time_ : low_speed_delay_time_;   //delay_time是高速小陀螺下的电控机械的各种延时，包括拨弹延时
@@ -500,19 +500,19 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
 
    // 1. 完全基于副本推演：先补充系统延迟时间
   double initial_dt = send_time + comm_delay_+delay_time;
-  Eigen::VectorXd current_state = predict_state(tracker_state, initial_dt); 
+  Eigen::VectorXd current_state = predict_state(tracker_state, initial_dt);
 
   ////获得整车中心并发送角度
    Plan plan;
-   plan.yaw=tools::limit_rad(aim_from_state_2(current_state , armors_num , bullet_speed)(0));
-   plan.pitch=aim_from_state_2(current_state , armors_num , bullet_speed)(1);
+   plan.yaw=tools::limit_rad(aim_from_state_2(current_state , armors_num , bullet_speed, circle_index)(0));
+   plan.pitch=aim_from_state_2(current_state , armors_num , bullet_speed, circle_index)(1);
    plan.fire=false;
 
-   
+
    //判断开火时机
   //考虑子弹飞行，机械电控延时，
 
-  auto armors = compute_armor_xyza(current_state, armors_num);
+  auto armors = compute_armor_xyza(current_state, armors_num, circle_index);
   double min_dist = 1e10;  double target_z = 0;
   for(auto &a : armors) { if(a.head<2>().norm() < min_dist) { min_dist = a.head<2>().norm(); target_z = a.z(); } }
 
@@ -521,12 +521,12 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   auto time_all=bullet_traj.fly_time + initial_dt;
 
   current_state=predict_state(current_state,time_all);
-  auto hit_armors = compute_armor_xyza(current_state, armors_num);
+  auto hit_armors = compute_armor_xyza(current_state, armors_num, circle_index);
 
 
   //遍历四块装甲板的状态，其其恰好到达对应的yaw，pitch
 for(int i= 0;i<armors_num;i++){
-  
+
         // 直接根据击中时的该块装甲板坐标计算其所需的 pitch 和 yaw
       double a_x = hit_armors[i][0];
       double a_y = hit_armors[i][1];
@@ -539,43 +539,43 @@ for(int i= 0;i<armors_num;i++){
 
       double a_dist = std::hypot(a_x, a_y);
       double yaw_i = tools::limit_rad(std::atan2(a_y, a_x) + yaw_offset_);
-      
+
       auto armor_traj = tools::Trajectory(bullet_speed, a_dist, a_z);
-      if (armor_traj.unsolvable) continue; 
-      
+      if (armor_traj.unsolvable) continue;
+
       double pitch_i = -armor_traj.pitch - pitch_offset_;
 
       if ( is_converged && std::abs((plan.yaw-yaw_i< yaw_fire_thresh_ )) && (std::abs(plan.pitch-pitch_i< pitch_fire_thresh_)))
       { plan.fire=true; }
-  
+
     }
     return plan;
   
   }
 
 
-Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time)
+Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, double bullet_speed, double send_time, int circle_index)
 {
   bool is_spinning = std::abs(tracker_state[7]) > decision_speed_;
   double delay_time = is_spinning ? high_speed_delay_time_ : low_speed_delay_time_;   //delay_time是高速小陀螺下的电控机械的各种延时，包括拨弹延时
 
   // 1. 基于副本推演：先补充系统硬件与通讯延迟时间，推演子弹即将出膛时的状态
   double initial_dt = send_time + comm_delay_ + delay_time;
-  Eigen::VectorXd current_state = predict_state(tracker_state, initial_dt); 
+  Eigen::VectorXd current_state = predict_state(tracker_state, initial_dt);
 
   // 2. 拿到此时的装甲板坐标，估算目标距离从而获得子弹飞行时间
-  auto armors_now = compute_armor_xyza(current_state, armors_num);
-  double min_dist = 1e10;  
+  auto armors_now = compute_armor_xyza(current_state, armors_num, circle_index);
+  double min_dist = 1e10;
   double target_z = 0;
-  for(auto &a : armors_now) { 
-      if(a.head<2>().norm() < min_dist) { 
-          min_dist = a.head<2>().norm(); 
-          target_z = a.z(); 
-      } 
+  for(auto &a : armors_now) {
+      if(a.head<2>().norm() < min_dist) {
+          min_dist = a.head<2>().norm();
+          target_z = a.z();
+      }
   }
 
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, target_z);
-  
+
   // 从现在到子弹命中的总时间 = 发送与系统延时 + 子弹飞行时间
   auto time_all = bullet_traj.fly_time + initial_dt;
 
@@ -585,12 +585,12 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   Plan plan;
   plan.fire = false; // 默认不开火
 
-  // 4. 调用标准的 aim_from_state，它会自动从 hit_state 选出最正对枪管的一块装甲板
+  // 4. 调用 aim_from_state_2 瞄准整车中心（遵循整车中心策略）
   try {
-      Eigen::Matrix<double, 2, 1> aim_result = aim_from_state(hit_state, armors_num, bullet_speed);
+      Eigen::Matrix<double, 2, 1> aim_result = aim_from_state_2(hit_state, armors_num, bullet_speed, circle_index);
       plan.yaw = aim_result(0);
       plan.pitch = aim_result(1);
-      
+
       // 在平移模式下，如果弹道规划成功且没有报出 unsolvable，就可以直接开火
       // 因为我们是在持续追瞄目标预测的落点。
       plan.fire = true;
@@ -604,18 +604,23 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
 Eigen::Matrix<double, 2, 1> Planner::aim_from_state_2(
   const Eigen::VectorXd & state_x,
   int armor_num,
-  double bullet_speed)
+  double bullet_speed,
+  int circle_index)
 {
   // -------------------------------
   // 从整车中心计算
   // -------------------------------
   double xc = state_x[0];
   double yc = state_x[2];
-  
+
   // Pitch取得平均高度值
   double avg_z = 0.0;
   if (armor_num == 4 && state_x.size() > 9) {
       avg_z = (state_x[4] + state_x[9]) / 2.0; // za_1 和 za_2 的平均
+  } else if (armor_num == 3) {
+      // 前哨站：三块装甲板高度分别为 z+0.1, z, z-0.1
+      // 平均高度 = (z+0.1 + z + z-0.1) / 3 = z，正好是中心高度
+      avg_z = state_x[4];
   } else {
       avg_z = state_x[4]; // 只有 za_1
   }
