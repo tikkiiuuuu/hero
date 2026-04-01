@@ -536,10 +536,10 @@ for(int i= 0;i<armors_num;i++){
       double a_y = hit_armors[i][1];
       double a_z = hit_armors[i][2];
 
-          //避免强行打切角大于60度的装甲板产生跳弹
+      //避免强行打切角过大的装甲板产生跳弹
       Eigen::Vector2d v(a_x, a_y);
       Eigen::Vector2d f(std::cos(hit_armors[i][3]), std::sin(hit_armors[i][3]));
-      if (f.dot(-v / v.norm()) < 0.5) continue; // 约cos(60度)=0.5, 切角太差直接过滤
+      if (f.dot(-v / v.norm()) < 10.0 / 12.0) continue; // 大弹丸弹速12m/s, 法向需10m/s触发, cos(θ)>=10/12(约0.833, 容许切角33.5度)
 
       double a_dist = std::hypot(a_x, a_y);
       double yaw_i = tools::limit_rad(std::atan2(a_y, a_x) + yaw_offset_);
@@ -1738,178 +1738,178 @@ for (int i = 0; i < HORIZON; i++) {
   }
 }
 
-// 2. 适用于 Target 的主规划函数
-Plan Planner::plan_with_ruckig(Target& target, double bullet_speed, double send_time) {
-    // 计算延迟时间
-    double delay_time = std::abs(target.get_state()[Target::state::w]) > decision_speed_
-        ? high_speed_delay_time_
-        : low_speed_delay_time_;
+// // 2. 适用于 Target 的主规划函数
+// Plan Planner::plan_with_ruckig(Target& target, double bullet_speed, double send_time) {
+//     // 计算延迟时间
+//     double delay_time = std::abs(target.get_state()[Target::state::w]) > decision_speed_
+//         ? high_speed_delay_time_
+//         : low_speed_delay_time_;
 
-    // 预测到发送时间
-    target.predict(send_time + delay_time);
+//     // 预测到发送时间
+//     target.predict(send_time + delay_time);
 
-    // 检查子弹速度
-    if (bullet_speed < 10 || bullet_speed > 25) {
-        bullet_speed = 22;
-    }
+//     // 检查子弹速度
+//     if (bullet_speed < 10 || bullet_speed > 25) {
+//         bullet_speed = 22;
+//     }
 
-    // 计算飞行时间并预测目标
-    Eigen::Vector3d xyz;
-    auto min_dist = 1e10;
-    for (auto& xyza: target.armor_xyza_list()) {
-        auto dist = xyza.head<2>().norm();
-        if (dist < min_dist) {
-            min_dist = dist;
-            xyz = xyza.head<3>();
-        }
-    }
-    auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
-    target.predict(bullet_traj.fly_time);
+//     // 计算飞行时间并预测目标
+//     Eigen::Vector3d xyz;
+//     auto min_dist = 1e10;
+//     for (auto& xyza: target.armor_xyza_list()) {
+//         auto dist = xyza.head<2>().norm();
+//         if (dist < min_dist) {
+//             min_dist = dist;
+//             xyz = xyza.head<3>();
+//         }
+//     }
+//     auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
+//     target.predict(bullet_traj.fly_time);
 
-    // 获取轨迹并检测阶跃点
-    double yaw0;
-    Trajectory traj;
-    int jump_idx = -1;
-    int length = -1;
-    try {
-        yaw0 = aim(target, bullet_speed)(0);
-        std::tie(traj, jump_idx, length) =
-            get_trajectory_with_jump_detection(target, yaw0, bullet_speed);
-    } catch (const std::exception& e) {
-        tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
-        return { false };
-    }
+//     // 获取轨迹并检测阶跃点
+//     double yaw0;
+//     Trajectory traj;
+//     int jump_idx = -1;
+//     int length = -1;
+//     try {
+//         yaw0 = aim(target, bullet_speed)(0);
+//         std::tie(traj, jump_idx, length) =
+//             get_trajectory_with_jump_detection(target, yaw0, bullet_speed);
+//     } catch (const std::exception& e) {
+//         tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
+//         return { false };
+//     }
 
-    Plan plan;
-    plan.control = true;
+//     Plan plan;
+//     plan.control = true;
 
-    std::array<double, 2> new_position, new_velocity, new_acceleration;
+//     std::array<double, 2> new_position, new_velocity, new_acceleration;
 
-    // 判断当前窗口内是否有阶跃点
-    // 窗口范围：[0, HORIZON-1]，当前时刻对应 HALF_HORIZON
-    bool use_ruckig = false;
-    int transition_start_idx = -1;
+//     // 判断当前窗口内是否有阶跃点
+//     // 窗口范围：[0, HORIZON-1]，当前时刻对应 HALF_HORIZON
+//     bool use_ruckig = false;
+//     int transition_start_idx = -1;
 
-    if (jump_idx >= 0 && jump_idx < HORIZON) {
-        // 检查阶跃点是否在当前窗口内（可以定义窗口范围）
-        // 这里假设窗口是 [HALF_HORIZON - window_size, HALF_HORIZON + window_size]
-        const int window_size = HALF_HORIZON / 2; // 窗口大小
-        int window_start = std::max(0, HALF_HORIZON - window_size);
-        int window_end = std::min(HORIZON - 1, HALF_HORIZON + window_size);
+//     if (jump_idx >= 0 && jump_idx < HORIZON) {
+//         // 检查阶跃点是否在当前窗口内（可以定义窗口范围）
+//         // 这里假设窗口是 [HALF_HORIZON - window_size, HALF_HORIZON + window_size]
+//         const int window_size = HALF_HORIZON / 2; // 窗口大小
+//         int window_start = std::max(0, HALF_HORIZON - window_size);
+//         int window_end = std::min(HORIZON - 1, HALF_HORIZON + window_size);
 
-        if (jump_idx >= window_start && jump_idx <= window_end) {
-            // 在阶跃点两侧搜索起点和终点
-            auto [success, best_start_idx] = ruckig_search_transition(traj, jump_idx, length);
+//         if (jump_idx >= window_start && jump_idx <= window_end) {
+//             // 在阶跃点两侧搜索起点和终点
+//             auto [success, best_start_idx] = ruckig_search_transition(traj, jump_idx, length);
 
-            if (success) {
-                use_ruckig = true;
-                transition_start_idx = best_start_idx;
-            }
-        }
-    }
+//             if (success) {
+//                 use_ruckig = true;
+//                 transition_start_idx = best_start_idx;
+//             }
+//         }
+//     }
 
-    Eigen::MatrixXd ruckig_vis_traj = Eigen::MatrixXd::Zero(4, HORIZON);
-    ruckig_vis_traj.setZero();
-    if (use_ruckig) {
-        double r_duration = ruckig_trajectory_.get_duration();
-        std::array<double, 2> p, v, a;
+//     Eigen::MatrixXd ruckig_vis_traj = Eigen::MatrixXd::Zero(4, HORIZON);
+//     ruckig_vis_traj.setZero();
+//     if (use_ruckig) {
+//         double r_duration = ruckig_trajectory_.get_duration();
+//         std::array<double, 2> p, v, a;
         
-        // 获取起点状态 (t=0)
-        std::array<double, 2> p_start, v_start, a_start;
-        ruckig_trajectory_.at_time(0.0, p_start, v_start, a_start);
+//         // 获取起点状态 (t=0)
+//         std::array<double, 2> p_start, v_start, a_start;
+//         ruckig_trajectory_.at_time(0.0, p_start, v_start, a_start);
 
-        // 获取终点状态 (t=duration)
-        std::array<double, 2> p_end, v_end, a_end;
-        ruckig_trajectory_.at_time(r_duration, p_end, v_end, a_end);
+//         // 获取终点状态 (t=duration)
+//         std::array<double, 2> p_end, v_end, a_end;
+//         ruckig_trajectory_.at_time(r_duration, p_end, v_end, a_end);
 
-        for (int i = 0; i < HORIZON; ++i) {
-            // 计算相对于 Ruckig 起点的时间
-            double rel_t = (i - transition_start_idx) * DT;
+//         for (int i = 0; i < HORIZON; ++i) {
+//             // 计算相对于 Ruckig 起点的时间
+//             double rel_t = (i - transition_start_idx) * DT;
 
-            if (rel_t < 0) {
-                // 在起点之前，保持起点状态（看起来是一条直线）
-                p = p_start;
-                v = v_start; 
-                // 或者设为 0，取决于你想看静止还是保持初速度，通常保持位置不变速度为0更符合直觉，
-                // 但如果想看完全连续，应该用 start 状态
-            } 
-            else if (rel_t > r_duration) {
-                // 在终点之后，保持终点状态（看起来是一条直线）
-                p = p_end;
-                v = v_end;
-            } 
-            else {
-                // 在 Ruckig 规划的时间范围内
-                ruckig_trajectory_.at_time(rel_t, p, v, a);
-            }
-            ruckig_vis_traj(0, i) = p[0]; // Yaw 位置
-            ruckig_vis_traj(1, i) = v[0]; // Yaw 速度
-            ruckig_vis_traj(2, i) = p[1]; // Pitch 位置
-            ruckig_vis_traj(3, i) = v[1]; // Pitch 速度
-            if (ruckig_vis_traj(0, 0) > 1e10) std::cout<<"Prevent optimization\n";
-        }
-    }
+//             if (rel_t < 0) {
+//                 // 在起点之前，保持起点状态（看起来是一条直线）
+//                 p = p_start;
+//                 v = v_start; 
+//                 // 或者设为 0，取决于你想看静止还是保持初速度，通常保持位置不变速度为0更符合直觉，
+//                 // 但如果想看完全连续，应该用 start 状态
+//             } 
+//             else if (rel_t > r_duration) {
+//                 // 在终点之后，保持终点状态（看起来是一条直线）
+//                 p = p_end;
+//                 v = v_end;
+//             } 
+//             else {
+//                 // 在 Ruckig 规划的时间范围内
+//                 ruckig_trajectory_.at_time(rel_t, p, v, a);
+//             }
+//             ruckig_vis_traj(0, i) = p[0]; // Yaw 位置
+//             ruckig_vis_traj(1, i) = v[0]; // Yaw 速度
+//             ruckig_vis_traj(2, i) = p[1]; // Pitch 位置
+//             ruckig_vis_traj(3, i) = v[1]; // Pitch 速度
+//             if (ruckig_vis_traj(0, 0) > 1e10) std::cout<<"Prevent optimization\n";
+//         }
+//     }
 
-    if (use_ruckig) {
-        // 使用ruckig轨迹，取窗口中点（HALF_HORIZON对应的时间点）
-        // 计算相对于轨迹起点的时间
-        double relative_time = (HALF_HORIZON - transition_start_idx) * DT;
-        double trajectory_duration = ruckig_trajectory_.get_duration();
+//     if (use_ruckig) {
+//         // 使用ruckig轨迹，取窗口中点（HALF_HORIZON对应的时间点）
+//         // 计算相对于轨迹起点的时间
+//         double relative_time = (HALF_HORIZON - transition_start_idx) * DT;
+//         double trajectory_duration = ruckig_trajectory_.get_duration();
 
-        // 确保时间在轨迹范围内
-        relative_time = std::clamp(relative_time, 0.0, trajectory_duration);
+//         // 确保时间在轨迹范围内
+//         relative_time = std::clamp(relative_time, 0.0, trajectory_duration);
 
-        ruckig_trajectory_.at_time(relative_time, new_position, new_velocity, new_acceleration);
+//         ruckig_trajectory_.at_time(relative_time, new_position, new_velocity, new_acceleration);
 
-        plan.yaw = tools::limit_rad(new_position[0] + yaw0);
-        plan.yaw_vel = new_velocity[0];
-        plan.yaw_acc = new_acceleration[0];
+//         plan.yaw = tools::limit_rad(new_position[0] + yaw0);
+//         plan.yaw_vel = new_velocity[0];
+//         plan.yaw_acc = new_acceleration[0];
 
-        plan.pitch = new_position[1];
-        plan.pitch_vel = new_velocity[1];
-        plan.pitch_acc = new_acceleration[1];
-    } else {
-        // 没有阶跃点或ruckig失败，直接使用原始轨迹
-        new_position[0] = traj(0, HALF_HORIZON);
-        new_position[1] = traj(2, HALF_HORIZON);
-        new_velocity[0] = traj(1, HALF_HORIZON);
-        new_velocity[1] = traj(3, HALF_HORIZON);
-        new_acceleration[0] = 0.0;
-        new_acceleration[1] = 0.0;
+//         plan.pitch = new_position[1];
+//         plan.pitch_vel = new_velocity[1];
+//         plan.pitch_acc = new_acceleration[1];
+//     } else {
+//         // 没有阶跃点或ruckig失败，直接使用原始轨迹
+//         new_position[0] = traj(0, HALF_HORIZON);
+//         new_position[1] = traj(2, HALF_HORIZON);
+//         new_velocity[0] = traj(1, HALF_HORIZON);
+//         new_velocity[1] = traj(3, HALF_HORIZON);
+//         new_acceleration[0] = 0.0;
+//         new_acceleration[1] = 0.0;
 
-        plan.yaw = tools::limit_rad(new_position[0] + yaw0);
-        plan.yaw_vel = new_velocity[0];
-        plan.yaw_acc = new_acceleration[0];
+//         plan.yaw = tools::limit_rad(new_position[0] + yaw0);
+//         plan.yaw_vel = new_velocity[0];
+//         plan.yaw_acc = new_acceleration[0];
 
-        plan.pitch = new_position[1];
-        plan.pitch_vel = new_velocity[1];
-        plan.pitch_acc = new_acceleration[1];
-    }
+//         plan.pitch = new_position[1];
+//         plan.pitch_vel = new_velocity[1];
+//         plan.pitch_acc = new_acceleration[1];
+//     }
 
-    // 设置目标值（射击轨迹上的值）
-    plan.target_yaw = tools::limit_rad(traj(0, HALF_HORIZON) + yaw0);
-    plan.target_pitch = traj(2, HALF_HORIZON);
+//     // 设置目标值（射击轨迹上的值）
+//     plan.target_yaw = tools::limit_rad(traj(0, HALF_HORIZON) + yaw0);
+//     plan.target_pitch = traj(2, HALF_HORIZON);
 
-    // 开火判断
-    if (use_ruckig) {
-        // 计算过渡段终点与射击轨迹的差异
-        double trajectory_duration = ruckig_trajectory_.get_duration();
-        std::array<double, 2> end_pos, end_vel, end_acc;
-        ruckig_trajectory_.at_time(trajectory_duration, end_pos, end_vel, end_acc);
+//     // 开火判断
+//     if (use_ruckig) {
+//         // 计算过渡段终点与射击轨迹的差异
+//         double trajectory_duration = ruckig_trajectory_.get_duration();
+//         std::array<double, 2> end_pos, end_vel, end_acc;
+//         ruckig_trajectory_.at_time(trajectory_duration, end_pos, end_vel, end_acc);
 
-        // 找到对应的终点索引
-        int end_idx = transition_start_idx + static_cast<int>(trajectory_duration / DT);
-        end_idx = std::clamp(end_idx, 0, HORIZON - 1);
+//         // 找到对应的终点索引
+//         int end_idx = transition_start_idx + static_cast<int>(trajectory_duration / DT);
+//         end_idx = std::clamp(end_idx, 0, HORIZON - 1);
 
-        double yaw_diff = std::abs(traj(0, end_idx) - end_pos[0]);
-        double pitch_diff = std::abs(traj(2, end_idx) - end_pos[1]);
-        plan.fire = std::hypot(yaw_diff, pitch_diff) < fire_thresh_;
-    } else {
-        // 直接跟随射击轨迹，可以开火
-        plan.fire = true;
-    }
+//         double yaw_diff = std::abs(traj(0, end_idx) - end_pos[0]);
+//         double pitch_diff = std::abs(traj(2, end_idx) - end_pos[1]);
+//         plan.fire = std::hypot(yaw_diff, pitch_diff) < fire_thresh_;
+//     } else {
+//         // 直接跟随射击轨迹，可以开火
+//         plan.fire = true;
+//     }
 
-    return plan;
-}
+//     return plan;
+// }
 
 }  // namespace auto_aim
