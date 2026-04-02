@@ -332,8 +332,26 @@ int main(int argc, char* argv[]) {
         // data["dt"] = tools::delta_time(t2, t1);
         plotter.plot(data);
         cv::resize(img, img, {}, 0.5, 0.5); // 显示时缩小图片尺寸
+        
+        // 添加瞄准中心十字
+        if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING || 
+            rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) {
+            std::vector<cv::Point3f> target_pts = {
+                cv::Point3f(rw_tracker.target_state[0], rw_tracker.target_state[2], rw_tracker.target_state[4])
+            };
+            auto projected_pts = solver.world2pixel(target_pts);
+            if (!projected_pts.empty()) {
+                cv::Point center(projected_pts[0].x * 0.5, projected_pts[0].y * 0.5); // 根据上面的 resize 进行等比例缩放
+                
+                int cross_size = 10;
+                cv::line(img, cv::Point(center.x - cross_size, center.y), cv::Point(center.x + cross_size, center.y), cv::Scalar(0, 0, 255), 2);
+                cv::line(img, cv::Point(center.x, center.y - cross_size), cv::Point(center.x, center.y + cross_size), cv::Scalar(0, 0, 255), 2);
+                cv::circle(img, center, cross_size, cv::Scalar(0, 0, 255), 1);
+            }
+        }
+
         cv::imshow("reprojection", img);
-        auto key = cv::waitKey(30);
+        auto key = cv::waitKey(20);
         // auto key = cv::waitKey(13);
         if (key == '=' || key == '+') {
             time_offset_us += std::chrono::microseconds(100);
