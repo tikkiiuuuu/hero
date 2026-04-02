@@ -1,6 +1,6 @@
 .vscode/
 .github/
-assets/demo/*.txt
+assets/demo/
 build/
 Camera/
 logs/
