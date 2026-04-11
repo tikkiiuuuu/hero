@@ -30,7 +30,7 @@ const std::string keys =
     "{config-path c  | configs/standard_rw.yaml | yaml配置文件的路径}"
   "{start-index s  | 0                 | 视频起始帧下标    }"
   "{end-index e    | 0                 | 视频结束帧下标    }"
-  "{@input-path    | assets/demo/demo  | avi和txt文件的路径}";
+  "{@input-path    | assets/demo/demo1  | avi和txt文件的路径}";
 
 int main(int argc, char* argv[]) {
     tools::Exiter exiter;
@@ -155,6 +155,8 @@ int main(int argc, char* argv[]) {
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         data["dt"] = tools::delta_time(t2, t1);
 
+        bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
+
         auto_aim::Plan plan;
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) 
@@ -170,13 +172,21 @@ int main(int argc, char* argv[]) {
                 //                         gimbal.state().pitch - MAX_ANGLE_STEP, 
                 //                         gimbal.state().pitch + MAX_ANGLE_STEP);
 
-                // 无论是否在缓冲期，都调用 planner.plan 更新内部状态
-                plan = planner.plan(
-                rw_tracker.target_state,           
-                rw_tracker.tracked_armors_num,     
-                11.5,                              
-                tools::delta_time(t2, t)           
-            );
+                if (is_spinning) {
+                    plan = planner.plan_1(
+                        rw_tracker.target_state,
+                        rw_tracker.tracked_armors_num,
+                        11.5,
+                        tools::delta_time(t2, t),
+                        rw_tracker.getCircleIndex());
+                } else {
+                    plan = planner.plan_2(
+                        rw_tracker.target_state,
+                        rw_tracker.tracked_armors_num,
+                        11.5,
+                        tools::delta_time(t2, t),
+                        rw_tracker.getCircleIndex());
+                }
                 plan.control=false;
                 plan.pitch=gimbal_pitch;
                 plan.yaw=gimbal_yaw;
@@ -192,12 +202,21 @@ int main(int argc, char* argv[]) {
             }
 
             else{
-                plan = planner.plan(
-                rw_tracker.target_state,           
-                rw_tracker.tracked_armors_num,     
-                11.5,                              
-                tools::delta_time(t2, t)           
-                );
+                if (is_spinning) {
+                    plan = planner.plan_1(
+                        rw_tracker.target_state,
+                        rw_tracker.tracked_armors_num,
+                        11.5,
+                        tools::delta_time(t2, t),
+                        rw_tracker.getCircleIndex());
+                } else {
+                    plan = planner.plan_2(
+                        rw_tracker.target_state,
+                        rw_tracker.tracked_armors_num,
+                        11.5,
+                        tools::delta_time(t2, t),
+                        rw_tracker.getCircleIndex());
+                }
             } 
 
             // 在生成完 plan 后对连续两帧的 plan 进行差值限幅
@@ -252,8 +271,9 @@ int main(int argc, char* argv[]) {
             past_pitch_deltas.clear();
         }
 
-        double actual_yaw_err = std::abs(tools::limit_rad(plan.target_yaw - gimbal_yaw));
-        double actual_pitch_err = std::abs(plan.target_pitch - gimbal_pitch);
+        // 误差评估统一使用最终执行角，避免与 target_yaw/target_pitch 分叉造成观感抖动。
+        double actual_yaw_err = std::abs(tools::limit_rad(plan.yaw - gimbal_yaw));
+        double actual_pitch_err = std::abs(plan.pitch - gimbal_pitch);
 
         // 整车中心开火门限：yaw / pitch 双轴同时满足，并限制合成角误差
         constexpr double FIRE_CENTER_YAW_ERR_THRES = 0.035;    // 约 2.0°
@@ -267,11 +287,11 @@ int main(int argc, char* argv[]) {
         bool is_strict_tracking = rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING;
 
         bool final_fire =
-            plan.fire &&
-            is_center_ready &&
-            is_strict_tracking &&
-            (recovery_frames <= 0) &&
-            fire_calm;
+            plan.fire;
+            // is_center_ready &&
+            // // is_strict_tracking &&
+            // (recovery_frames <= 0) &&
+            // fire_calm;
         data["plan_yaw"] = plan.yaw;
         data["plan_yaw_vel"] = plan.yaw_vel;
         data["plan_yaw_acc"] = plan.yaw_acc;
@@ -301,8 +321,8 @@ int main(int argc, char* argv[]) {
         data["is_yaw_ready"] = is_yaw_ready ? 1 : 0;
         data["is_pitch_ready"] = is_pitch_ready ? 1 : 0;
         data["center_angle_err"] = center_angle_err;
-        data["target_yaw"] = plan.target_yaw;
-        data["target_pitch"] = plan.target_pitch;
+        data["target_yaw"] = plan.yaw;
+        data["target_pitch"] = plan.pitch;
 
         data["max_window_yaw_err"] = plan.max_window_yaw_err;
         data["max_window_pitch_err"] = plan.max_window_pitch_err;
@@ -316,7 +336,7 @@ int main(int argc, char* argv[]) {
         //data["bullet_count"] = gimbal.state().bullet_count;
         if(rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING
             || rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST){
-                data["send_yaw"]= plan.target_yaw;
+                data["send_yaw"]= plan.yaw;
             }
         else{
             data["send_yaw"]= gimbal_yaw;
@@ -336,17 +356,28 @@ int main(int argc, char* argv[]) {
         // 添加瞄准中心十字
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING || 
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) {
+            double aim_dist = plan.dist;
+            if (aim_dist <= 1e-6) {
+                aim_dist = std::hypot(rw_tracker.target_state[0], rw_tracker.target_state[2]);
+            }
+
+            Eigen::Vector3d aim_xyz = tools::ypd2xyz({plan.yaw, plan.pitch, aim_dist});
             std::vector<cv::Point3f> target_pts = {
-                cv::Point3f(rw_tracker.target_state[0], rw_tracker.target_state[2], rw_tracker.target_state[4])
+                cv::Point3f(
+                    static_cast<float>(aim_xyz.x()),
+                    static_cast<float>(aim_xyz.y()),
+                    static_cast<float>(aim_xyz.z()))
             };
             auto projected_pts = solver.world2pixel(target_pts);
             if (!projected_pts.empty()) {
                 cv::Point center(projected_pts[0].x * 0.5, projected_pts[0].y * 0.5); // 根据上面的 resize 进行等比例缩放
-                
+                if(plan.fire==1){             
                 int cross_size = 10;
                 cv::line(img, cv::Point(center.x - cross_size, center.y), cv::Point(center.x + cross_size, center.y), cv::Scalar(0, 0, 255), 2);
                 cv::line(img, cv::Point(center.x, center.y - cross_size), cv::Point(center.x, center.y + cross_size), cv::Scalar(0, 0, 255), 2);
                 cv::circle(img, center, cross_size, cv::Scalar(0, 0, 255), 1);
+                }
+   
             }
         }
 
