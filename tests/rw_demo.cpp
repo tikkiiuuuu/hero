@@ -30,7 +30,7 @@ const std::string keys =
     "{config-path c  | configs/standard_rw.yaml | yaml配置文件的路径}"
   "{start-index s  | 0                 | 视频起始帧下标    }"
   "{end-index e    | 0                 | 视频结束帧下标    }"
-  "{@input-path    | assets/demo/demo1  | avi和txt文件的路径}";
+  "{@input-path    | assets/demo/demo  | avi和txt文件的路径}";
 
 int main(int argc, char* argv[]) {
     tools::Exiter exiter;
@@ -359,6 +359,7 @@ int main(int argc, char* argv[]) {
 
         data["max_window_yaw_err"] = plan.max_window_yaw_err;
         data["max_window_pitch_err"] = plan.max_window_pitch_err;
+        data["dist"] = plan.dist;
         
         
         data["actual_yaw_err"] = actual_yaw_err;
@@ -392,12 +393,20 @@ int main(int argc, char* argv[]) {
         // 添加瞄准中心十字
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING || 
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) {
-            double aim_dist = plan.dist;
-            if (aim_dist <= 1e-6) {
-                aim_dist = std::hypot(rw_tracker.target_state[0], rw_tracker.target_state[2]);
+            double aim_xy_dist = plan.dist;
+            if (aim_xy_dist <= 1e-6) {
+                aim_xy_dist = std::hypot(rw_tracker.target_state[0], rw_tracker.target_state[2]);
             }
 
-            Eigen::Vector3d aim_xyz = tools::ypd2xyz({plan.yaw, plan.pitch, aim_dist});
+            // plan.pitch 使用的是控制系符号，绘图前转换为世界系符号。
+            double draw_pitch = -plan.pitch;
+            double cos_draw_pitch = std::cos(draw_pitch);
+            double aim_space_dist = aim_xy_dist;
+            if (std::abs(cos_draw_pitch) > 1e-3) {
+                aim_space_dist = aim_xy_dist / std::abs(cos_draw_pitch);
+            }
+
+            Eigen::Vector3d aim_xyz = tools::ypd2xyz({plan.yaw, draw_pitch, aim_space_dist});
             std::vector<cv::Point3f> target_pts = {
                 cv::Point3f(
                     static_cast<float>(aim_xyz.x()),
@@ -407,12 +416,12 @@ int main(int argc, char* argv[]) {
             auto projected_pts = solver.world2pixel(target_pts);
             if (!projected_pts.empty()) {
                 cv::Point center(projected_pts[0].x * 0.5, projected_pts[0].y * 0.5); // 根据上面的 resize 进行等比例缩放
-                if(plan.fire==1){             
+                         
                 int cross_size = 10;
                 cv::line(img, cv::Point(center.x - cross_size, center.y), cv::Point(center.x + cross_size, center.y), cv::Scalar(0, 0, 255), 2);
                 cv::line(img, cv::Point(center.x, center.y - cross_size), cv::Point(center.x, center.y + cross_size), cv::Scalar(0, 0, 255), 2);
                 cv::circle(img, center, cross_size, cv::Scalar(0, 0, 255), 1);
-                }
+                
    
             }
         }
