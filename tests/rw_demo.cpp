@@ -140,7 +140,7 @@ int main(int argc, char* argv[]) {
         // 状态机切换检测，如果刚从 LOST 变成 TRACKING，启动10帧的缓冲期
         if (last_track_state == auto_aim::RWTracker::TrackState::LOST && 
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING) {
-            recovery_frames = 240; // 设置10帧的滤波收敛期
+            recovery_frames = 20; // 设置10帧的滤波收敛期
         }
         last_track_state = rw_tracker.tracker_state;
 
@@ -158,11 +158,13 @@ int main(int argc, char* argv[]) {
         bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
 
         auto_aim::Plan plan;
+        bool in_recovery_hold = false;
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) 
         {
             //只在缓冲期内进行限幅和限速
             if (recovery_frames > 0) {
+                in_recovery_hold = true;
                 // const float MAX_ANGLE_STEP = 0.05f; // 缓冲期的严格角度步长限制(约2.8度)
                 
                 // plan.yaw = std::clamp(static_cast<float>(plan.yaw), 
@@ -292,6 +294,37 @@ int main(int argc, char* argv[]) {
             // // is_strict_tracking &&
             // (recovery_frames <= 0) &&
             // fire_calm;
+
+        int fire_block_code = 0;
+        std::string fire_block_reason = "ALLOW";
+        if (rw_tracker.tracker_state != auto_aim::RWTracker::TrackState::TRACKING &&
+            rw_tracker.tracker_state != auto_aim::RWTracker::TrackState::TEMP_LOST) {
+            fire_block_code = 1;
+            fire_block_reason = "NO_TRACK";
+        } else if (in_recovery_hold) {
+            fire_block_code = 2;
+            fire_block_reason = "RECOVERY_HOLD";
+        } else if (!final_fire) {
+            if (is_spinning) {
+                bool not_converged = false;
+                if (rw_tracker.target_state.size() > 10 && rw_tracker.tracked_armors_num == 4) {
+                    const double r1 = rw_tracker.target_state[8];
+                    const double r2 = rw_tracker.target_state[10];
+                    not_converged = (r1 < 0.15 || r1 > 0.50 || r2 < 0.15 || r2 > 0.50);
+                }
+                if (not_converged) {
+                    fire_block_code = 3;
+                    fire_block_reason = "PLAN1_NOT_CONVERGED";
+                } else {
+                    fire_block_code = 4;
+                    fire_block_reason = "PLAN1_WINDOW_OR_NORMAL";
+                }
+            } else {
+                fire_block_code = 5;
+                fire_block_reason = "PLAN2_NOT_READY";
+            }
+        }
+
         data["plan_yaw"] = plan.yaw;
         data["plan_yaw_vel"] = plan.yaw_vel;
         data["plan_yaw_acc"] = plan.yaw_acc;
@@ -330,6 +363,7 @@ int main(int argc, char* argv[]) {
         
         data["actual_yaw_err"] = actual_yaw_err;
         data["actual_pitch_err"] = actual_pitch_err;
+        data["fire_block_code"] = fire_block_code;
 
         data["fire_calm"] = fire_calm;
         //data["bullet_speed"] = gimbal.state().bullet_speed;
@@ -347,6 +381,8 @@ int main(int argc, char* argv[]) {
         // 在图像上显示当前的时间偏移量
         auto offset_text = fmt::format("Time Offset: {} us", time_offset_us.count());
         cv::putText(img, offset_text, { 10, 60 }, cv::FONT_HERSHEY_SIMPLEX, 1.0, { 0, 255, 0 }, 2);
+        auto fire_gate_text = fmt::format("FireGate[{}]: {}", fire_block_code, fire_block_reason);
+        cv::putText(img, fire_gate_text, { 10, 95 }, cv::FONT_HERSHEY_SIMPLEX, 0.8, { 0, 255, 255 }, 2);
 
         // std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         // data["dt"] = tools::delta_time(t2, t1);

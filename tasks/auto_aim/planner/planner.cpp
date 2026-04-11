@@ -67,89 +67,6 @@ Planner::Planner(const std::string & config_path,const int ifdouble)
   setup_pitch_solver(config_path);
 }
 
-// Plan Planner::plan(Target target, double bullet_speed)
-// {
-//   // 0. Check bullet speed
-//   if (bullet_speed < 10 || bullet_speed > 25) {
-//     bullet_speed = 22;
-//   }
-
-//   // 1. Predict fly_time
-//   Eigen::Vector3d xyz;
-//   auto min_dist = 1e10;
-//   for (auto & xyza : target.armor_xyza_list()) {
-//     auto dist = xyza.head<2>().norm();
-//     if (dist < min_dist) {
-//       min_dist = dist;
-//       xyz = xyza.head<3>();
-//     }
-//   }
-//   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
-//   target.predict(bullet_traj.fly_time);
-//   // target.predict(10e-6);
-
-//   // 2. Get trajectory
-//   double yaw0;
-//   Trajectory traj;
-//   try {
-//     yaw0 = aim(target, bullet_speed)(0);
-//     traj = get_trajectory(target, yaw0, bullet_speed);
-//   } catch (const std::exception & e) {
-//     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
-//     return {false};
-//   }
-
-//   // 3. Solve yaw
-//   Eigen::VectorXd x0(2);
-//   x0 << traj(0, 0), traj(1, 0);
-//   tiny_set_x0(yaw_solver_, x0);
-
-//   yaw_solver_->work->Xref = traj.block(0, 0, 2, HORIZON);
-//   tiny_solve(yaw_solver_);
-
-//   // 4. Solve pitch
-//   x0 << traj(2, 0), traj(3, 0);
-//   tiny_set_x0(pitch_solver_, x0);
-
-//   pitch_solver_->work->Xref = traj.block(2, 0, 2, HORIZON);
-//   tiny_solve(pitch_solver_);
-
-//   Plan plan;
-//   plan.control = true;
-
-//   plan.target_yaw = tools::limit_rad(traj(0, HALF_HORIZON) + yaw0);
-//   plan.target_pitch = traj(2, HALF_HORIZON);
-
-//   plan.yaw = tools::limit_rad(yaw_solver_->work->x(0, HALF_HORIZON) + yaw0);
-//   plan.yaw_vel = yaw_solver_->work->x(1, HALF_HORIZON);
-//   plan.yaw_acc = yaw_solver_->work->u(0, HALF_HORIZON);
-
-//   plan.pitch = pitch_solver_->work->x(0, HALF_HORIZON);
-//   plan.pitch_vel = pitch_solver_->work->x(1, HALF_HORIZON);
-//   plan.pitch_acc = pitch_solver_->work->u(0, HALF_HORIZON);
-
-//   auto shoot_offset_ = 2;
-//   plan.fire =
-//     std::hypot(
-//       traj(0, HALF_HORIZON + shoot_offset_) - yaw_solver_->work->x(0, HALF_HORIZON + shoot_offset_),
-//       traj(2, HALF_HORIZON + shoot_offset_) -
-//         pitch_solver_->work->x(0, HALF_HORIZON + shoot_offset_)) < fire_thresh_;
-//   return plan;
-// }
-
-// Plan Planner::plan(std::optional<Target> target, double bullet_speed)
-// {
-//   if (!target.has_value()) return {false};
-
-//   double delay_time =
-//     std::abs(target->get_state()[Target::state::w]) > decision_speed_ ? high_speed_delay_time_ : low_speed_delay_time_;
-
-//   auto future = std::chrono::steady_clock::now() + std::chrono::microseconds(int(delay_time * 1e6));
-
-//   target->predict(future);
-
-//   return plan(*target, bullet_speed);
-// }
 
 /************************************************************************************************************************
  * @brief 之前的plan分开,很屎，现在合并了。同时把predict(dt)也换为了future,绝对时间
@@ -302,36 +219,6 @@ Eigen::VectorXd Planner::predict_state(const Eigen::VectorXd & current_state, do
   return x_prior;
 }
 
-// std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd & state_x, int armor_num) const
-// {
-//   std::vector<Eigen::Vector4d> res;
-//     // ... 这里将目标车辆中心点 + 半径 r 和 theta 推算出每个装甲板的三维坐标
-//     // (逻辑与原生 target.armor_xyza_list() 完全一致，但从传入参数 state_x 中读取)
-//       std::vector<Eigen::Vector4d> _armor_xyza_list;
-
-//   for (int i = 0; i < armor_num_; i++) {
-//     auto angle = tools::limit_rad(get_state()[state::a] + i * 2 * CV_PI / armor_num_);
-//     Eigen::Vector3d xyz = h_armor_xyz(i);
-//     _armor_xyza_list.push_back({xyz[0], xyz[1], xyz[2], angle});
-//   }
-//   return res;
-// }
-
-// // 计算出装甲板中心的坐标（考虑长短轴）
-// Eigen::Vector3d Target::h_armor_xyz( int id) const
-// {
-//   const auto& filter_state = get_state();
-//   auto angle = tools::limit_rad(filter_state[state::a] + id * 2 * CV_PI / armor_num_);
-//   auto use_l_h = (armor_num_ == 4) && (id == 1 || id == 3);
-
-//   auto r = (use_l_h) ? filter_state[state::r] + filter_state[state::l] : filter_state[state::r];
-//   auto armor_x = filter_state[state::x] - r * std::cos(angle);
-//   auto armor_y = filter_state[state::y] - r * std::sin(angle);
-//   auto armor_z = (use_l_h) ? filter_state[state::z] + filter_state[state::h] : filter_state[state::z];
-
-//   return {armor_x, armor_y, armor_z};
-// }
-
 std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd & state_x, int armor_num, int circle_index) const
 {
     std::vector<Eigen::Vector4d> res;
@@ -365,30 +252,6 @@ std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd &
     return res;
 }
 
-// Eigen::Matrix<double, 2, 1> Planner::aim_from_state(const Eigen::VectorXd & state_x, int armor_num, double bullet_speed)
-// {
-//     // 利用算出的装甲板，得到最优 yaw / pitch
-//     auto armors = compute_armor_xyza(state_x, armor_num);
-//     Eigen::Vector3d xyz;
-//     double yaw;
-//     double min_dist = 1e10;
-
-//     for (auto & a : armors) {
-//         if (a.head<2>().norm() < min_dist) {
-//             min_dist = a.head<2>().norm();
-//             xyz = a.head<3>();
-//             yaw = a[3];
-//         }
-//     }
-//     debug_xyza = Eigen::Vector4d(xyz.x(), xyz.y(), xyz.z(), yaw);
-
-//     auto azim = std::atan2(xyz.y(), xyz.x());
-//     auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
-//     if (bullet_traj.unsolvable) throw std::runtime_error("Unsolvable bullet trajectory!");
-
-//     return {tools::limit_rad(azim + yaw_offset_), -bullet_traj.pitch - pitch_offset_};
-
-// }
 
 Eigen::Matrix<double, 2, 1> Planner::aim_from_state(
   const Eigen::VectorXd & state_x,
@@ -510,9 +373,15 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   ////获得整车中心并发送角度
   Plan plan{}; // 初始化全部置零防止野指针
   plan.control = true;
-  plan.yaw = tools::limit_rad(aim_from_state_2(current_state, armors_num, bullet_speed, circle_index)(0));
-  plan.pitch = aim_from_state_2(current_state, armors_num, bullet_speed, circle_index)(1);
   plan.fire = false;
+  try {
+    auto aim_result = aim_from_state_2(current_state, armors_num, bullet_speed, circle_index);
+    plan.yaw = tools::limit_rad(aim_result(0));
+    plan.pitch = aim_result(1);
+  } catch (const std::exception & e) {
+    tools::logger()->warn("Plan_1 Unsolvable trajectory at aim stage!");
+    return plan;
+  }
 
 
    //判断开火时机
@@ -936,61 +805,7 @@ void Planner::plan_double(Target target, double bullet_speed)
       traj(2, HALF_HORIZON + shoot_offset_) -
         pitch_solver_->work->x(0, HALF_HORIZON + shoot_offset_)) < fire_thresh_;
 
-  // // 3. Solve yaw
-  // Eigen::VectorXd x0(6);
-  // // if(plan_double_.control){
-  // //   x0 << traj(0, 0), plan_double_.yaw_big, plan_double_.yaw_small, traj(1,0), plan_double_.yaw_vel_big, plan_double_.yaw_vel_small;
-  // // }else{
-  // //   x0 << traj(0, 0), 0, 0, traj(1,0), 0, 0;
-  // // }
-  // x0 << traj(0, 0), 0, 0, traj(1,0), 0, 0;
-  // tiny_set_x0(yaw_solver_, x0);
 
-  // yaw_solver_->work->Xref = Eigen::MatrixXd::Zero(6,HORIZON);
-  // yaw_solver_->work->Xref.block(0,0,1, HORIZON) = traj.block(0, 0, 1, HORIZON);
-  // yaw_solver_->work->Xref.block(3,0,1, HORIZON) = traj.block(1, 0, 1, HORIZON);
-  // // yaw_solver_->work->Xref.block(0,0,1, HORIZON) = traj.block(0, 0, 1, HORIZON)*0.7;
-  // // yaw_solver_->work->Xref.block(0,0,1, HORIZON) = traj.block(0, 0, 1, HORIZON)*0.3;
-  // tiny_solve(yaw_solver_);
-
-  // // 4. Solve pitch
-  // Eigen::VectorXd x01(2);
-  // x01 << traj(2, 0), traj(3, 0);
-  // tiny_set_x0(pitch_solver_, x01);
-
-  // pitch_solver_->work->Xref = traj.block(2, 0, 2, HORIZON);
-  // tiny_solve(pitch_solver_);
-
-  // plan_double_.control = true;
-
-  // plan_double_.target_yaw = tools::limit_rad(traj(0, HALF_HORIZON) + yaw0);
-  // plan_double_.target_pitch = traj(2, HALF_HORIZON);
-  // plan_double_.target_yaw_vel = traj(1, HALF_HORIZON);
-
-  // plan_double_.yaw = tools::limit_rad(yaw_solver_->work->x(0, HALF_HORIZON) + yaw0);
-  // plan_double_.yaw_vel = yaw_solver_->work->x(3, HALF_HORIZON);
-  // // plan_double.yaw_acc = yaw_solver_->work->u(0, HALF_HORIZON);
-  // plan_double_.yaw_acc = yaw_solver_->work->u(0, HALF_HORIZON)+yaw_solver_->work->u(1, HALF_HORIZON);
-
-  // plan_double_.yaw_big = tools::limit_rad(yaw_solver_->work->x(1, HALF_HORIZON) + yaw0);
-  // plan_double_.yaw_vel_big = yaw_solver_->work->x(4, HALF_HORIZON);
-  // plan_double_.yaw_acc_big = yaw_solver_->work->u(0, HALF_HORIZON);
-
-  // plan_double_.yaw_small = tools::limit_rad(yaw_solver_->work->x(2, HALF_HORIZON) + yaw0);
-  // plan_double_.yaw_vel_small = yaw_solver_->work->x(5, HALF_HORIZON);
-  // plan_double_.yaw_acc_small = yaw_solver_->work->u(1, HALF_HORIZON);
-
-  // plan_double_.pitch = pitch_solver_->work->x(0, HALF_HORIZON);
-  // plan_double_.pitch_vel = pitch_solver_->work->x(1, HALF_HORIZON);
-  // plan_double_.pitch_acc = pitch_solver_->work->u(0, HALF_HORIZON);
-
-  // auto shoot_offset_ = 2;
-  // plan_double_.fire =
-  //   std::hypot(
-  //     traj(0, HALF_HORIZON + shoot_offset_) - yaw_solver_->work->x(0, HALF_HORIZON + shoot_offset_),
-  //     traj(2, HALF_HORIZON + shoot_offset_) -
-  //       pitch_solver_->work->x(0, HALF_HORIZON + shoot_offset_)) < fire_thresh_;
-  // // return &plan_double_;
 }
 
 void Planner::setup_yaw_solver(const std::string & config_path)
@@ -1086,84 +901,6 @@ void Planner::setup_doubleyaw_solver(const std::string & config_path)
 
 
 
-  // //clang-format off
-  // Eigen::MatrixXd A{{1, 0, 0, 0, DT, DT}, 
-  //                   {0, 1, 0, 0, DT, 0}, 
-  //                   {0, 0, 1, 0, 0, DT},
-  //                   {0, 0, 0, 0, 1, 1},
-  //                   {0, 0, 0, 0, 1, 0},
-  //                   {0, 0, 0, 0, 0, 1}};
-  
-  // Eigen::MatrixXd B{{ 0, 0},
-  //                   { 0, 0},
-  //                   { 0, 0},
-  //                   { 0, 0},
-  //                   { DT, 0},
-  //                   { 0, DT}};
-  // //clang-format on
-  // Eigen::VectorXd f{{0, 0, 0, 0, 0, 0}};
-  // Eigen::Matrix<double, 6, 1> Q(Q_yaw.data());
-  // Eigen::Matrix<double, 2, 1> R(R_yaw.data());
-  // tiny_setup(&yaw_solver_, A, B, f, Q.asDiagonal(), R.asDiagonal(), rho_, 6, 2, HORIZON, 1);
-
-  // Eigen::MatrixXd x_max(6, HORIZON);
-  // x_max.row(0).setConstant(1e5); 
-  // x_max.row(1).setConstant(1e5); 
-  // x_max.row(2).setConstant(M_PI/6);
-  // x_max.row(3).setConstant(1e5);
-  // x_max.row(4).setConstant(1e5);
-  // x_max.row(5).setConstant(1e5);
-
-  // Eigen::MatrixXd x_min(6, HORIZON);
-  // x_min.row(0).setConstant(-1e5);
-  // x_min.row(1).setConstant(-1e5); 
-  // x_min.row(2).setConstant(-M_PI/6);
-  // x_min.row(3).setConstant(-1e5);
-  // x_min.row(4).setConstant(-1e5);
-  // x_min.row(5).setConstant(-1e5);
-
-  // Eigen::MatrixXd u_max(2, HORIZON - 1);
-  // u_max.row(0).setConstant(max_big_yaw_acc); 
-  // u_max.row(1).setConstant(max_small_yaw_acc); 
-
-  // Eigen::MatrixXd u_min(2, HORIZON - 1);
-  // u_min.row(0).setConstant(-max_big_yaw_acc); 
-  // u_min.row(1).setConstant(-max_small_yaw_acc); 
-  // tiny_set_bound_constraints(yaw_solver_, x_min, x_max, u_min, u_max);
-
-  // // // 添加线性等式约束：yaw - yaw_big - yaw_small = 0
-  // // // 转换为两个不等式：
-  // // // yaw - yaw_big - yaw_small <= 0  和  yaw - yaw_big - yaw_small >= 0
-  
-  // // Eigen::MatrixXd Alin_x(2, 3);  // 2个约束，3个状态变量
-  // // Alin_x << 1, -1, -1,   // yaw - yaw_big - yaw_small <= 0
-  // //          -1,  1,  1;   // -yaw + yaw_big + yaw_small <= 0
-  
-  // // Eigen::VectorXd blin_x(2);
-  // // blin_x << 0, 0;  // 右侧都是 0
-  
-  // // // 没有控制输入的线性约束
-  // // Eigen::MatrixXd Alin_u(0, 2);  // 0个约束
-  // // Eigen::VectorXd blin_u(0);
-  
-  // // tiny_set_linear_constraints(yaw_solver_, Alin_x, blin_x, Alin_u, blin_u);
-
-  // Eigen::MatrixXd Alin_x(4, 6);  // 改为3个约束
-  // Alin_x << 1, -1, -1, 0, 0, 0,    // x[0] - x[1] - x[2] <= 1e-17  (上界)
-  //         -1,  1,  1, 0, 0, 0,    // -x[0] + x[1] + x[2] <= 1e-17 (下界，即 x[0] - x[1] - x[2] >= -1e-17)
-  //           0, 0, 0, -1, 1, 1,     // -x[3] + x[4] + x[5] <= 1e-17 (速度约束)
-  //           0, 0, 0, 1, -1, -1;   
-  // Eigen::VectorXd blin_x(4);
-  // blin_x << 1e-5, 1e-5, 1e-5, 1e-5;
-  // tiny_set_linear_constraints(yaw_solver_, Alin_x, blin_x, Eigen::MatrixXd::Zero(0, 6), Eigen::VectorXd::Zero(0));
-
-  // yaw_solver_->settings->abs_pri_tol = 1e-4;
-  // yaw_solver_->settings->en_state_linear = 1;
-  // yaw_solver_->settings->en_input_linear = 1;
-  // yaw_solver_->settings->en_state_bound = 1;
-  // yaw_solver_->settings->en_input_bound = 1;
-  // yaw_solver_->settings->max_iter = iter_time_; 
-  // // yaw_solver_->settings->adaptive_rho = 1;
 }
 
 void Planner::setup_pitch_solver(const std::string & config_path)
@@ -1738,178 +1475,5 @@ for (int i = 0; i < HORIZON; i++) {
   }
 }
 
-// // 2. 适用于 Target 的主规划函数
-// Plan Planner::plan_with_ruckig(Target& target, double bullet_speed, double send_time) {
-//     // 计算延迟时间
-//     double delay_time = std::abs(target.get_state()[Target::state::w]) > decision_speed_
-//         ? high_speed_delay_time_
-//         : low_speed_delay_time_;
-
-//     // 预测到发送时间
-//     target.predict(send_time + delay_time);
-
-//     // 检查子弹速度
-//     if (bullet_speed < 10 || bullet_speed > 25) {
-//         bullet_speed = 22;
-//     }
-
-//     // 计算飞行时间并预测目标
-//     Eigen::Vector3d xyz;
-//     auto min_dist = 1e10;
-//     for (auto& xyza: target.armor_xyza_list()) {
-//         auto dist = xyza.head<2>().norm();
-//         if (dist < min_dist) {
-//             min_dist = dist;
-//             xyz = xyza.head<3>();
-//         }
-//     }
-//     auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
-//     target.predict(bullet_traj.fly_time);
-
-//     // 获取轨迹并检测阶跃点
-//     double yaw0;
-//     Trajectory traj;
-//     int jump_idx = -1;
-//     int length = -1;
-//     try {
-//         yaw0 = aim(target, bullet_speed)(0);
-//         std::tie(traj, jump_idx, length) =
-//             get_trajectory_with_jump_detection(target, yaw0, bullet_speed);
-//     } catch (const std::exception& e) {
-//         tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
-//         return { false };
-//     }
-
-//     Plan plan;
-//     plan.control = true;
-
-//     std::array<double, 2> new_position, new_velocity, new_acceleration;
-
-//     // 判断当前窗口内是否有阶跃点
-//     // 窗口范围：[0, HORIZON-1]，当前时刻对应 HALF_HORIZON
-//     bool use_ruckig = false;
-//     int transition_start_idx = -1;
-
-//     if (jump_idx >= 0 && jump_idx < HORIZON) {
-//         // 检查阶跃点是否在当前窗口内（可以定义窗口范围）
-//         // 这里假设窗口是 [HALF_HORIZON - window_size, HALF_HORIZON + window_size]
-//         const int window_size = HALF_HORIZON / 2; // 窗口大小
-//         int window_start = std::max(0, HALF_HORIZON - window_size);
-//         int window_end = std::min(HORIZON - 1, HALF_HORIZON + window_size);
-
-//         if (jump_idx >= window_start && jump_idx <= window_end) {
-//             // 在阶跃点两侧搜索起点和终点
-//             auto [success, best_start_idx] = ruckig_search_transition(traj, jump_idx, length);
-
-//             if (success) {
-//                 use_ruckig = true;
-//                 transition_start_idx = best_start_idx;
-//             }
-//         }
-//     }
-
-//     Eigen::MatrixXd ruckig_vis_traj = Eigen::MatrixXd::Zero(4, HORIZON);
-//     ruckig_vis_traj.setZero();
-//     if (use_ruckig) {
-//         double r_duration = ruckig_trajectory_.get_duration();
-//         std::array<double, 2> p, v, a;
-        
-//         // 获取起点状态 (t=0)
-//         std::array<double, 2> p_start, v_start, a_start;
-//         ruckig_trajectory_.at_time(0.0, p_start, v_start, a_start);
-
-//         // 获取终点状态 (t=duration)
-//         std::array<double, 2> p_end, v_end, a_end;
-//         ruckig_trajectory_.at_time(r_duration, p_end, v_end, a_end);
-
-//         for (int i = 0; i < HORIZON; ++i) {
-//             // 计算相对于 Ruckig 起点的时间
-//             double rel_t = (i - transition_start_idx) * DT;
-
-//             if (rel_t < 0) {
-//                 // 在起点之前，保持起点状态（看起来是一条直线）
-//                 p = p_start;
-//                 v = v_start; 
-//                 // 或者设为 0，取决于你想看静止还是保持初速度，通常保持位置不变速度为0更符合直觉，
-//                 // 但如果想看完全连续，应该用 start 状态
-//             } 
-//             else if (rel_t > r_duration) {
-//                 // 在终点之后，保持终点状态（看起来是一条直线）
-//                 p = p_end;
-//                 v = v_end;
-//             } 
-//             else {
-//                 // 在 Ruckig 规划的时间范围内
-//                 ruckig_trajectory_.at_time(rel_t, p, v, a);
-//             }
-//             ruckig_vis_traj(0, i) = p[0]; // Yaw 位置
-//             ruckig_vis_traj(1, i) = v[0]; // Yaw 速度
-//             ruckig_vis_traj(2, i) = p[1]; // Pitch 位置
-//             ruckig_vis_traj(3, i) = v[1]; // Pitch 速度
-//             if (ruckig_vis_traj(0, 0) > 1e10) std::cout<<"Prevent optimization\n";
-//         }
-//     }
-
-//     if (use_ruckig) {
-//         // 使用ruckig轨迹，取窗口中点（HALF_HORIZON对应的时间点）
-//         // 计算相对于轨迹起点的时间
-//         double relative_time = (HALF_HORIZON - transition_start_idx) * DT;
-//         double trajectory_duration = ruckig_trajectory_.get_duration();
-
-//         // 确保时间在轨迹范围内
-//         relative_time = std::clamp(relative_time, 0.0, trajectory_duration);
-
-//         ruckig_trajectory_.at_time(relative_time, new_position, new_velocity, new_acceleration);
-
-//         plan.yaw = tools::limit_rad(new_position[0] + yaw0);
-//         plan.yaw_vel = new_velocity[0];
-//         plan.yaw_acc = new_acceleration[0];
-
-//         plan.pitch = new_position[1];
-//         plan.pitch_vel = new_velocity[1];
-//         plan.pitch_acc = new_acceleration[1];
-//     } else {
-//         // 没有阶跃点或ruckig失败，直接使用原始轨迹
-//         new_position[0] = traj(0, HALF_HORIZON);
-//         new_position[1] = traj(2, HALF_HORIZON);
-//         new_velocity[0] = traj(1, HALF_HORIZON);
-//         new_velocity[1] = traj(3, HALF_HORIZON);
-//         new_acceleration[0] = 0.0;
-//         new_acceleration[1] = 0.0;
-
-//         plan.yaw = tools::limit_rad(new_position[0] + yaw0);
-//         plan.yaw_vel = new_velocity[0];
-//         plan.yaw_acc = new_acceleration[0];
-
-//         plan.pitch = new_position[1];
-//         plan.pitch_vel = new_velocity[1];
-//         plan.pitch_acc = new_acceleration[1];
-//     }
-
-//     // 设置目标值（射击轨迹上的值）
-//     plan.target_yaw = tools::limit_rad(traj(0, HALF_HORIZON) + yaw0);
-//     plan.target_pitch = traj(2, HALF_HORIZON);
-
-//     // 开火判断
-//     if (use_ruckig) {
-//         // 计算过渡段终点与射击轨迹的差异
-//         double trajectory_duration = ruckig_trajectory_.get_duration();
-//         std::array<double, 2> end_pos, end_vel, end_acc;
-//         ruckig_trajectory_.at_time(trajectory_duration, end_pos, end_vel, end_acc);
-
-//         // 找到对应的终点索引
-//         int end_idx = transition_start_idx + static_cast<int>(trajectory_duration / DT);
-//         end_idx = std::clamp(end_idx, 0, HORIZON - 1);
-
-//         double yaw_diff = std::abs(traj(0, end_idx) - end_pos[0]);
-//         double pitch_diff = std::abs(traj(2, end_idx) - end_pos[1]);
-//         plan.fire = std::hypot(yaw_diff, pitch_diff) < fire_thresh_;
-//     } else {
-//         // 直接跟随射击轨迹，可以开火
-//         plan.fire = true;
-//     }
-
-//     return plan;
-// }
 
 }  // namespace auto_aim
