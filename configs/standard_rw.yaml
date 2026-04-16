@@ -137,8 +137,8 @@ pitch_kd: 0
 
 #####-----planner-----#####
 fire_thresh: 0.0000010 #0.010  不用了，解耦yaw，pitch
-yaw_fire_thresh: 0.035 # 0.035
-pitch_fire_thresh: 0.004 # 0.004 0.00008
+yaw_fire_thresh: 0.35 # 0.035
+pitch_fire_thresh: 0.4 # 0.004 0.00008
 
 max_yaw_acc: 30 #50 70
 Q_yaw: [9e6, 0]  # 9e6 9e7 0

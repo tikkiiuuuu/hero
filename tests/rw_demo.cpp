@@ -288,8 +288,68 @@ int main(int argc, char* argv[]) {
         bool is_center_ready = is_yaw_ready && is_pitch_ready && center_angle_err < FIRE_CENTER_TOTAL_ERR_THRES;
         bool is_strict_tracking = rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING;
 
+        bool outpost_middle_ready = true;
+        double outpost_middle_err = 0.0;
+        if (rw_tracker.tracked_armors_num == 3 &&
+            (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
+             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST)) {
+            constexpr double OUTPOST_MIDDLE_ANG_ERR_THRES = 0.035;  // rad
+            const auto &x = rw_tracker.target_state;
+            if (x.size() > 8) {
+                Eigen::Vector3d aim_dir = tools::ypd2xyz({plan.yaw, -plan.pitch, 1.0});
+                if (aim_dir.norm() > 1e-6) {
+                    aim_dir.normalize();
+                    const double xc = x[0];
+                    const double yc = x[2];
+                    const double zc = x[4];
+                    const double theta = x[6];
+                    const double r = x[8];
+                    const int circle_idx = rw_tracker.getCircleIndex();
+                    const int circle_type[3] = {1, 0, -1};
+
+                    int best_idx = -1;
+                    int middle_idx = -1;
+                    double best_err = 1e9;
+                    double middle_err = 1e9;
+                    for (int i = 0; i < 3; i++) {
+                        double armor_theta = tools::limit_rad(theta + i * 2 * CV_PI / 3);
+                        double armor_x = xc + r * std::cos(armor_theta);
+                        double armor_y = yc + r * std::sin(armor_theta);
+                        double armor_z = zc + 0.1 * circle_type[(circle_idx + i) % 3];
+
+                        Eigen::Vector3d armor_dir(armor_x, armor_y, armor_z);
+                        double armor_norm = armor_dir.norm();
+                        if (armor_norm <= 1e-6) {
+                            continue;
+                        }
+                        armor_dir /= armor_norm;
+
+                        double dot = std::clamp(aim_dir.dot(armor_dir), -1.0, 1.0);
+                        double ang_err = std::acos(dot);
+                        if (ang_err < best_err) {
+                            best_err = ang_err;
+                            best_idx = i;
+                        }
+                        if (circle_type[(circle_idx + i) % 3] == 0) {
+                            middle_idx = i;
+                            middle_err = ang_err;
+                        }
+                    }
+
+                    outpost_middle_err = middle_err;
+                    outpost_middle_ready =
+                        (middle_idx >= 0) && (best_idx == middle_idx) &&
+                        (middle_err < OUTPOST_MIDDLE_ANG_ERR_THRES);
+                } else {
+                    outpost_middle_ready = false;
+                }
+            } else {
+                outpost_middle_ready = false;
+            }
+        }
+
         bool final_fire =
-            plan.fire;
+            plan.fire && outpost_middle_ready;
             // is_center_ready &&
             // // is_strict_tracking &&
             // (recovery_frames <= 0) &&
@@ -304,6 +364,9 @@ int main(int argc, char* argv[]) {
         } else if (in_recovery_hold) {
             fire_block_code = 2;
             fire_block_reason = "RECOVERY_HOLD";
+        } else if (!outpost_middle_ready) {
+            fire_block_code = 6;
+            fire_block_reason = "OUTPOST_NOT_MIDDLE";
         } else if (!final_fire) {
             if (is_spinning) {
                 bool not_converged = false;
@@ -351,6 +414,8 @@ int main(int argc, char* argv[]) {
         data["fire"] = final_fire ? 1 : 0;
         data["plan_fire"] = plan.fire ? 1 : 0;
         data["is_gimbal_ready"] = is_center_ready ? 1 : 0;
+        data["outpost_middle_ready"] = outpost_middle_ready ? 1 : 0;
+        data["outpost_middle_err"] = outpost_middle_err;
         data["is_yaw_ready"] = is_yaw_ready ? 1 : 0;
         data["is_pitch_ready"] = is_pitch_ready ? 1 : 0;
         data["center_angle_err"] = center_angle_err;
