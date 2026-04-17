@@ -98,7 +98,7 @@ int main(int argc, char* argv[]) {
         // 状态机切换检测，如果刚从 LOST 变成 TRACKING，启动10帧的缓冲期
         if (last_track_state == auto_aim::RWTracker::TrackState::LOST && 
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING) {
-            recovery_frames = 10; // 设置10帧的滤波收敛期
+            recovery_frames = 20; // 设置10帧的滤波收敛期
         }
         last_track_state = rw_tracker.tracker_state;
 
@@ -116,11 +116,13 @@ int main(int argc, char* argv[]) {
         bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
 
         auto_aim::Plan plan;
+        bool in_recovery_hold = false;
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) 
         {
             //只在缓冲期内进行限幅和限速
             if (recovery_frames > 0) {
+                in_recovery_hold = true;
                 // const float MAX_ANGLE_STEP = 0.05f; // 缓冲期的严格角度步长限制(约2.8度)
                 
                 // plan.yaw = std::clamp(static_cast<float>(plan.yaw), 
@@ -239,17 +241,120 @@ int main(int argc, char* argv[]) {
             past_pitch_deltas.clear();
         }
 
+        // 误差评估统一使用最终执行角，避免与 target_yaw/target_pitch 分叉造成观感抖动。
         double actual_yaw_err = std::abs(tools::limit_rad(plan.yaw - gimbal.state().yaw));
         double actual_pitch_err = std::abs(plan.pitch - gimbal.state().pitch);
 
-        bool is_gimbal_ready = false;
-        if(is_spinning){
-            is_gimbal_ready = gimbal.state().yaw_vel < 0.05 && actual_yaw_err < 0.035;
+        // 整车中心开火门限：yaw / pitch 双轴同时满足，并限制合成角误差
+        constexpr double FIRE_CENTER_YAW_ERR_THRES = 0.035;    // 约 2.0°
+        constexpr double FIRE_CENTER_PITCH_ERR_THRES = 0.015;  // 约 0.86°
+        constexpr double FIRE_CENTER_TOTAL_ERR_THRES = 0.038;  // 合成角误差门限
+
+        bool is_yaw_ready = actual_yaw_err < FIRE_CENTER_YAW_ERR_THRES;
+        bool is_pitch_ready = actual_pitch_err < FIRE_CENTER_PITCH_ERR_THRES;
+        double center_angle_err = std::hypot(actual_yaw_err, actual_pitch_err);
+        bool is_center_ready = is_yaw_ready && is_pitch_ready && center_angle_err < FIRE_CENTER_TOTAL_ERR_THRES;
+        bool is_strict_tracking = rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING;
+
+        bool outpost_middle_ready = true;
+        double outpost_middle_err = 0.0;
+        if (rw_tracker.tracked_armors_num == 3 &&
+            (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
+             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST)) {
+            constexpr double OUTPOST_MIDDLE_ANG_ERR_THRES = 0.035;  // rad
+            const auto& x = rw_tracker.target_state;
+            if (x.size() > 8) {
+                Eigen::Vector3d aim_dir = tools::ypd2xyz({plan.yaw, -plan.pitch, 1.0});
+                if (aim_dir.norm() > 1e-6) {
+                    aim_dir.normalize();
+                    const double xc = x[0];
+                    const double yc = x[2];
+                    const double zc = x[4];
+                    const double theta = x[6];
+                    const double r = x[8];
+                    const int circle_idx = rw_tracker.getCircleIndex();
+                    const int circle_type[3] = {1, 0, -1};
+
+                    int best_idx = -1;
+                    int middle_idx = -1;
+                    double best_err = 1e9;
+                    double middle_err = 1e9;
+                    for (int i = 0; i < 3; i++) {
+                        double armor_theta = tools::limit_rad(theta + i * 2 * CV_PI / 3);
+                        double armor_x = xc + r * std::cos(armor_theta);
+                        double armor_y = yc + r * std::sin(armor_theta);
+                        double armor_z = zc + 0.1 * circle_type[(circle_idx + i) % 3];
+
+                        Eigen::Vector3d armor_dir(armor_x, armor_y, armor_z);
+                        double armor_norm = armor_dir.norm();
+                        if (armor_norm <= 1e-6) {
+                            continue;
+                        }
+                        armor_dir /= armor_norm;
+
+                        double dot = std::clamp(aim_dir.dot(armor_dir), -1.0, 1.0);
+                        double ang_err = std::acos(dot);
+                        if (ang_err < best_err) {
+                            best_err = ang_err;
+                            best_idx = i;
+                        }
+                        if (circle_type[(circle_idx + i) % 3] == 0) {
+                            middle_idx = i;
+                            middle_err = ang_err;
+                        }
+                    }
+
+                    outpost_middle_err = middle_err;
+                    outpost_middle_ready =
+                        (middle_idx >= 0) && (best_idx == middle_idx) &&
+                        (middle_err < OUTPOST_MIDDLE_ANG_ERR_THRES);
+                } else {
+                    outpost_middle_ready = false;
+                }
+            } else {
+                outpost_middle_ready = false;
+            }
         }
-        else{
-            is_gimbal_ready = actual_yaw_err < 0.035 /*&& actual_pitch_err < 0.015*/; // 0.04 0.02 约 2.3  1.1 度
+
+        bool final_fire =
+            plan.fire && outpost_middle_ready;
+            // is_center_ready &&
+            // // is_strict_tracking &&
+            // (recovery_frames <= 0) &&
+            // gimbal.state().fire_calm;
+
+        int fire_block_code = 0;
+        std::string fire_block_reason = "ALLOW";
+        if (rw_tracker.tracker_state != auto_aim::RWTracker::TrackState::TRACKING &&
+            rw_tracker.tracker_state != auto_aim::RWTracker::TrackState::TEMP_LOST) {
+            fire_block_code = 1;
+            fire_block_reason = "NO_TRACK";
+        } else if (in_recovery_hold) {
+            fire_block_code = 2;
+            fire_block_reason = "RECOVERY_HOLD";
+        } else if (!outpost_middle_ready) {
+            fire_block_code = 6;
+            fire_block_reason = "OUTPOST_NOT_MIDDLE";
+        } else if (!final_fire) {
+            if (is_spinning) {
+                bool not_converged = false;
+                if (rw_tracker.target_state.size() > 10 && rw_tracker.tracked_armors_num == 4) {
+                    const double r1 = rw_tracker.target_state[8];
+                    const double r2 = rw_tracker.target_state[10];
+                    not_converged = (r1 < 0.15 || r1 > 0.50 || r2 < 0.15 || r2 > 0.50);
+                }
+                if (not_converged) {
+                    fire_block_code = 3;
+                    fire_block_reason = "PLAN1_NOT_CONVERGED";
+                } else {
+                    fire_block_code = 4;
+                    fire_block_reason = "PLAN1_WINDOW_OR_NORMAL";
+                }
+            } else {
+                fire_block_code = 5;
+                fire_block_reason = "PLAN2_NOT_READY";
+            }
         }
-        bool final_fire = plan.fire && is_gimbal_ready && gimbal.state().fire_calm; 
 
         if (plan.yaw_vel > 2.5 ){plan.yaw_vel=2.5;};
         if (plan.yaw_vel < -2.5 ){plan.yaw_vel=-2.5;};
@@ -332,13 +437,16 @@ int main(int argc, char* argv[]) {
         data["gimbal_yaw"] = gimbal.state().yaw;
         data["gimbal_pitch"] = gimbal.state().pitch;
 
-        data["final_fire"] = final_fire ? 1 : 0;
+        data["fire"] = final_fire ? 1 : 0;
         data["plan_fire"] = plan.fire ? 1 : 0;
-        data["is_gimbal_ready"] = is_gimbal_ready ? 1 : 0;
-        data["is_yaw_ready"] = actual_yaw_err < 0.035 ? 1 : 0;
-        data["is_pitch_ready"] = actual_pitch_err < 0.015 ? 1 : 0;
-        data["target_yaw"] = plan.target_yaw;
-        data["target_pitch"] = plan.target_pitch;
+        data["is_gimbal_ready"] = is_center_ready ? 1 : 0;
+        data["outpost_middle_ready"] = outpost_middle_ready ? 1 : 0;
+        data["outpost_middle_err"] = outpost_middle_err;
+        data["is_yaw_ready"] = is_yaw_ready ? 1 : 0;
+        data["is_pitch_ready"] = is_pitch_ready ? 1 : 0;
+        data["center_angle_err"] = center_angle_err;
+        data["target_yaw"] = plan.yaw;
+        data["target_pitch"] = plan.pitch;
 
         data["max_window_yaw_err"] = plan.max_window_yaw_err;
         data["max_window_pitch_err"] = plan.max_window_pitch_err;
@@ -346,6 +454,7 @@ int main(int argc, char* argv[]) {
         
         data["actual_yaw_err"] = actual_yaw_err;
         data["actual_pitch_err"] = actual_pitch_err;
+        data["fire_block_code"] = fire_block_code;
 
         data["fire_calm"] = gimbal.state().fire_calm;
         data["is_spinning"] = is_spinning;
@@ -364,11 +473,48 @@ int main(int argc, char* argv[]) {
         // 在图像上显示当前的时间偏移量
         auto offset_text = fmt::format("Time Offset: {} us", time_offset_us.count());
         cv::putText(img, offset_text, { 10, 60 }, cv::FONT_HERSHEY_SIMPLEX, 1.0, { 0, 255, 0 }, 2);
+        auto fire_gate_text = fmt::format("FireGate[{}]: {}", fire_block_code, fire_block_reason);
+        cv::putText(img, fire_gate_text, { 10, 95 }, cv::FONT_HERSHEY_SIMPLEX, 0.8, { 0, 255, 255 }, 2);
 
         // std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         // data["dt"] = tools::delta_time(t2, t1);
         plotter.plot(data);
         cv::resize(img, img, {}, 0.5, 0.5); // 显示时缩小图片尺寸
+
+        // 添加瞄准中心十字
+        if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
+            rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) {
+            double aim_xy_dist = plan.dist;
+            if (aim_xy_dist <= 1e-6) {
+                aim_xy_dist = std::hypot(rw_tracker.target_state[0], rw_tracker.target_state[2]);
+            }
+
+            // plan.pitch 使用的是控制系符号，绘图前转换为世界系符号。
+            double draw_pitch = -plan.pitch;
+            double cos_draw_pitch = std::cos(draw_pitch);
+            double aim_space_dist = aim_xy_dist;
+            if (std::abs(cos_draw_pitch) > 1e-3) {
+                aim_space_dist = aim_xy_dist / std::abs(cos_draw_pitch);
+            }
+
+            Eigen::Vector3d aim_xyz = tools::ypd2xyz({plan.yaw, draw_pitch, aim_space_dist});
+            std::vector<cv::Point3f> target_pts = {
+                cv::Point3f(
+                    static_cast<float>(aim_xyz.x()),
+                    static_cast<float>(aim_xyz.y()),
+                    static_cast<float>(aim_xyz.z()))
+            };
+            auto projected_pts = solver.world2pixel(target_pts);
+            if (!projected_pts.empty()) {
+                cv::Point center(projected_pts[0].x * 0.5, projected_pts[0].y * 0.5); // 根据上面的 resize 进行等比例缩放
+
+                int cross_size = 10;
+                cv::line(img, cv::Point(center.x - cross_size, center.y), cv::Point(center.x + cross_size, center.y), cv::Scalar(0, 0, 255), 2);
+                cv::line(img, cv::Point(center.x, center.y - cross_size), cv::Point(center.x, center.y + cross_size), cv::Scalar(0, 0, 255), 2);
+                cv::circle(img, center, cross_size, cv::Scalar(0, 0, 255), 1);
+            }
+        }
+
         cv::imshow("reprojection", img);
         auto key = cv::waitKey(2);
         // auto key = cv::waitKey(13);
