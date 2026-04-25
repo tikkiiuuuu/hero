@@ -30,7 +30,7 @@ const std::string keys =
     "{config-path c  | configs/standard_rw.yaml | yaml配置文件的路径}"
   "{start-index s  | 0                 | 视频起始帧下标    }"
   "{end-index e    | 0                 | 视频结束帧下标    }"
-  "{@input-path    | assets/demo/demo1  | avi和txt文件的路径}";
+  "{@input-path    | assets/demo/demo  | avi和txt文件的路径}";
 
 int main(int argc, char* argv[]) {
     tools::Exiter exiter;

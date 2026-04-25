@@ -45,7 +45,7 @@ void load(
 
     // 识别标定板
     std::vector<cv::Point2f> centers_2d;
-    auto success = cv::findChessboardCornersSB(img, cv::Size(8, 6), centers_2d);  // 默认是对称圆点图案
+    auto success = cv::findCirclesGrid(img, cv::Size(7, 7), centers_2d);  // 默认是对称圆点图案
     // 显示识别结果
     auto drawing = img.clone();
     cv::drawChessboardCorners(drawing, pattern_size, centers_2d, success);

@@ -80,7 +80,7 @@ void load(
 
     // 识别标定板
     std::vector<cv::Point2f> centers_2d;
-    auto success = cv::findChessboardCornersSB(img, pattern_size, centers_2d); 
+    auto success = cv::findCirclesGrid(img, pattern_size, centers_2d); 
 
     // 显示识别结果
     cv::drawChessboardCorners(drawing, pattern_size, centers_2d, success);
@@ -184,17 +184,17 @@ int main(int argc, char * argv[])
   // 计算相机同理想情况的偏角
   Eigen::Matrix3d R_camera2gimbal_eigen;
   cv::cv2eigen(R_camera2gimbal, R_camera2gimbal_eigen);
-  Eigen::Matrix3d R_gimbal2ideal{{0, -1, 0}, {0, 0, -1}, {1, 0, 0}};
+  // Eigen::Matrix3d R_gimbal2ideal{{0, -1, 0}, {0, 0, -1}, {1, 0, 0}};
 //   Eigen::Matrix3d R_gimbal2ideal{
 //   {0, -1, 0},
 //   {-0.5, 0, -0.8660254037844386},
 //   {0.8660254037844386, 0, -0.5}
 // };30
-// Eigen::Matrix3d R_gimbal2ideal{
-// {0, -1, 0},
-// {-0.2588190451, 0, -0.9659258263},
-// {0.9659258263, 0, -0.2588190451}
-// };15
+  Eigen::Matrix3d R_gimbal2ideal{
+  {0, -1, 0},
+  {-0.2588190451, 0, -0.9659258263},
+  {0.9659258263, 0, -0.2588190451}
+  };
   Eigen::Matrix3d R_camera2ideal = R_gimbal2ideal * R_camera2gimbal_eigen;
   Eigen::Vector3d camera_ypr = tools::eulers(R_camera2ideal, 1, 0, 2) * 57.3;  // degree
 

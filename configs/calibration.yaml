@@ -1,5 +1,5 @@
-pattern_cols: 8
-pattern_rows: 6
+pattern_cols: 7
+pattern_rows: 7
 center_distance_mm: 28
 
 R_gimbal2imubody: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0,  0.0, 0.0, 1.0]

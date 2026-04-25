@@ -51,7 +51,7 @@ void capture_loop(
     tools::draw_text(img_with_ypr, fmt::format("X {:.2f}", zyx[2]), {40, 120}, {0, 0, 255});
 
     std::vector<cv::Point2f> centers_2d;
-    auto success = cv::findChessboardCornersSB(img, cv::Size(8, 6), centers_2d);  // 默认是对称圆点图案
+    auto success = cv::findCirclesGrid(img, cv::Size(8, 6), centers_2d);  // 默认是对称圆点图案
     cv::drawChessboardCorners(img_with_ypr, cv::Size(8, 6), centers_2d, success);  // 显示识别结果
     cv::resize(img_with_ypr, img_with_ypr, {}, 0.5, 0.5);  // 显示时缩小图片尺寸
 
