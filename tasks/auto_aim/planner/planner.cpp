@@ -14,6 +14,95 @@ using namespace std::chrono_literals;
 
 namespace auto_aim
 {
+namespace
+{
+constexpr double kSmallArmorWidth = 0.133;
+constexpr double kLargeArmorWidth = 0.225;
+constexpr double kArmorHeight = 0.050;
+constexpr double kMinEnableYaw = 0.0087;   // 0.5 deg
+constexpr double kMinEnablePitch = 0.0061; // 0.35 deg
+constexpr double kPitchFactor = 0.9659258262890683; // cos(15 deg)
+
+inline std::pair<double, double> calc_dynamic_fire_window(
+  double distance,
+  double diff_yaw,
+  bool is_big_armor,
+  bool center_mode)
+{
+  const double safe_dist = std::max(distance, 0.3);
+  const double armor_w = is_big_armor ? kLargeArmorWidth : kSmallArmorWidth;
+  double yaw_window = std::abs(std::atan2(armor_w * 0.5, safe_dist));
+  double pitch_window = std::abs(std::atan2(kArmorHeight * 0.5, safe_dist));
+
+  double yaw_factor = std::cos(diff_yaw);
+  if (center_mode) {
+    yaw_factor = std::max(0.0, yaw_factor);
+  }
+
+  yaw_window = std::max(kMinEnableYaw, yaw_window * std::abs(yaw_factor));
+  pitch_window = std::max(kMinEnablePitch, pitch_window * kPitchFactor);
+  return {yaw_window, pitch_window};
+}
+
+inline bool is_armor_facing_camera(const Eigen::Vector4d & armor_xyza)
+{
+  const Eigen::Vector2d v(armor_xyza[0], armor_xyza[1]);
+  const double v_norm = v.norm();
+  if (v_norm < 1e-6) {
+    return false;
+  }
+  const Eigen::Vector2d f(std::cos(armor_xyza[3]), std::sin(armor_xyza[3]));
+  const double score = f.dot(-v / v_norm);
+  return score >= (10.0 / 12.0);
+}
+
+inline int select_best_armor_idx(const std::vector<Eigen::Vector4d> & armors)
+{
+  if (armors.empty()) {
+    return -1;
+  }
+  int best_idx = -1;
+  double best_score = -1e9;
+  for (int i = 0; i < static_cast<int>(armors.size()); ++i) {
+    const Eigen::Vector2d v(armors[i][0], armors[i][1]);
+    const double v_norm = v.norm();
+    if (v_norm < 1e-6) {
+      continue;
+    }
+    const Eigen::Vector2d f(std::cos(armors[i][3]), std::sin(armors[i][3]));
+    const double score = f.dot(-v / v_norm);
+    if (score > best_score) {
+      best_score = score;
+      best_idx = i;
+    }
+  }
+  return best_idx;
+}
+
+inline double calc_incident_yaw_diff(const Eigen::Vector4d & armor_xyza)
+{
+  const Eigen::Vector2d v(armor_xyza[0], armor_xyza[1]);
+  const double v_norm = v.norm();
+  if (v_norm < 1e-6) {
+    return M_PI_2;
+  }
+  const Eigen::Vector2d f(std::cos(armor_xyza[3]), std::sin(armor_xyza[3]));
+  const double dot = std::clamp(f.dot(-v / v_norm), -1.0, 1.0);
+  return std::acos(dot);
+}
+
+inline int select_outpost_middle_idx(int circle_index)
+{
+  const int circle_type[3] = {1, 0, -1};
+  for (int i = 0; i < 3; ++i) {
+    if (circle_type[(circle_index + i) % 3] == 0) {
+      return i;
+    }
+  }
+  return 0;
+}
+}  // namespace
+
 Planner::Planner(const std::string & config_path)
 {
   auto yaml = tools::load(config_path);
@@ -392,38 +481,53 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   for(auto &a : armors) { if(a.head<2>().norm() < min_dist) { min_dist = a.head<2>().norm(); target_z = a.z(); } }
 
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, target_z);
+  plan.dist = min_dist;
 
   current_state = predict_state(current_state, bullet_traj.fly_time);
   auto hit_armors = compute_armor_xyza(current_state, armors_num, circle_index);
 
+  const int best_idx = (armors_num == 3)
+    ? select_outpost_middle_idx(circle_index)
+    : select_best_armor_idx(hit_armors);
+  if (best_idx < 0 || best_idx >= static_cast<int>(hit_armors.size())) {
+    return plan;
+  }
 
-  //遍历四块装甲板的状态，其其恰好到达对应的yaw，pitch
-for(int i= 0;i<armors_num;i++){
+  const auto & best_armor = hit_armors[best_idx];
+  if (armors_num != 3 && !is_armor_facing_camera(best_armor)) {
+    return plan;
+  }
 
-        // 直接根据击中时的该块装甲板坐标计算其所需的 pitch 和 yaw
-      double a_x = hit_armors[i][0];
-      double a_y = hit_armors[i][1];
-      double a_z = hit_armors[i][2];
+  const double a_x = best_armor[0];
+  const double a_y = best_armor[1];
+  const double a_z = best_armor[2];
+  const double a_dist = std::hypot(a_x, a_y);
+  const double yaw_i = tools::limit_rad(std::atan2(a_y, a_x) + yaw_offset_);
 
-      //避免强行打切角过大的装甲板产生跳弹
-      Eigen::Vector2d v(a_x, a_y);
-      Eigen::Vector2d f(std::cos(hit_armors[i][3]), std::sin(hit_armors[i][3]));
-      if (f.dot(-v / v.norm()) < 10.0 / 12.0) continue; // 大弹丸弹速12m/s, 法向需10m/s触发, cos(θ)>=10/12(约0.833, 容许切角33.5度)
+  auto armor_traj = tools::Trajectory(bullet_speed, a_dist, a_z);
+  if (armor_traj.unsolvable) {
+    return plan;
+  }
 
-      double a_dist = std::hypot(a_x, a_y);
-      double yaw_i = tools::limit_rad(std::atan2(a_y, a_x) + yaw_offset_);
-
-      auto armor_traj = tools::Trajectory(bullet_speed, a_dist, a_z);
-      if (armor_traj.unsolvable) continue;
-
-      double pitch_i = -armor_traj.pitch - pitch_offset_;
-
-      if (is_converged && 
-          std::abs(plan.yaw - yaw_i) < yaw_fire_thresh_ && 
-          std::abs(plan.pitch - pitch_i) < pitch_fire_thresh_)
-      { plan.fire=true; }
-
+  const double pitch_i = -armor_traj.pitch - pitch_offset_;
+  if (armors_num == 3) {
+    if (is_converged) {
+      plan.fire = true;
     }
+    return plan;
+  }
+  const double diff_yaw = (armors_num == 3) ? 0.0 : calc_incident_yaw_diff(best_armor);
+  const bool is_big_armor = (armors_num == 2);
+  auto [yaw_win, pitch_win] =
+    calc_dynamic_fire_window(best_armor.head<3>().norm(), diff_yaw, is_big_armor, false);
+
+  const double yaw_err = std::abs(tools::limit_rad(plan.yaw - yaw_i));
+  const double pitch_err = std::abs(plan.pitch - pitch_i);
+
+  if (is_converged && yaw_err < yaw_win && pitch_err < pitch_win) {
+    plan.fire = true;
+  }
+
     return plan;
   
   }
@@ -433,6 +537,15 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
 {
   bool is_spinning = std::abs(tracker_state[7]) > decision_speed_;
   double delay_time = is_spinning ? high_speed_delay_time_ : low_speed_delay_time_;   //delay_time是高速小陀螺下的电控机械的各种延时，包括拨弹延时
+
+  bool is_converged = true;
+  if (tracker_state.size() > 10 && armors_num == 4) {
+    const double r1 = tracker_state[8];
+    const double r2 = tracker_state[10];
+    if (r1 < 0.15 || r1 > 0.50 || r2 < 0.15 || r2 > 0.50) {
+      is_converged = false;
+    }
+  }
 
   // 1. 基于副本推演：先补充系统硬件与通讯延迟时间，推演子弹即将出膛时的状态
   double initial_dt = send_time + comm_delay_ + delay_time;
@@ -450,6 +563,14 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   }
 
   auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, target_z);
+  
+  if (bullet_traj.unsolvable) {
+    Plan plan{};
+    plan.control = false;
+    plan.fire = false;
+    plan.dist = min_dist;
+    return plan;
+  }
 
   // 从现在到子弹命中的总时间 = 发送与系统延时 + 子弹飞行时间
   auto time_all = bullet_traj.fly_time + initial_dt;
@@ -457,21 +578,79 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   // 3. 彻底推演出子弹命中时的车辆状态（添加了平移提前量）
   Eigen::VectorXd hit_state = predict_state(tracker_state, time_all);
 
-  Plan plan{}; // 初始化置零
+  Plan plan{};
   plan.control = true;
-  plan.fire = false; // 默认不开火
+  plan.fire = false;
+  plan.dist = min_dist;
 
-  // 4. 调用 aim_from_state_2 瞄准整车中心（遵循整车中心策略）
+  // 4. 英雄平移靶策略：仍按“整车中心击打”出角，但使用可击中装甲板评估开火窗口。
   try {
-      Eigen::Matrix<double, 2, 1> aim_result = aim_from_state_2(hit_state, armors_num, bullet_speed, circle_index);
-      plan.yaw = aim_result(0);
-      plan.pitch = aim_result(1);
+    const auto hit_armors = compute_armor_xyza(hit_state, armors_num, circle_index);
+    const int best_idx = (armors_num == 3)
+      ? select_outpost_middle_idx(circle_index)
+      : select_best_armor_idx(hit_armors);
 
-      // 在平移模式下，如果弹道规划成功且没有报出 unsolvable，就可以直接开火
-      // 因为我们是在持续追瞄目标预测的落点。
+    if (best_idx < 0 || best_idx >= static_cast<int>(hit_armors.size())) {
+      return plan;
+    }
+
+    const auto & best_armor = hit_armors[best_idx];
+    if (armors_num != 3 && !is_armor_facing_camera(best_armor)) {
+      return plan;
+    }
+
+    const double center_x = hit_state[0];
+    const double center_y = hit_state[2];
+    const double center_yaw = std::atan2(center_y, center_x);
+    const double center_dist = std::hypot(center_x, center_y);
+    const double armor_to_center = std::hypot(best_armor[0] - center_x, best_armor[1] - center_y);
+
+    // 按 whole-car-center 思路，把瞄点放在“中心线向相机回退一个装甲半径”的位置。
+    const double aim_dist = std::max(0.05, center_dist - armor_to_center);
+    const double aim_x = aim_dist * std::cos(center_yaw);
+    const double aim_y = aim_dist * std::sin(center_yaw);
+    const double aim_z = best_armor[2];
+
+    auto center_traj = tools::Trajectory(bullet_speed, aim_dist, aim_z);
+    if (center_traj.unsolvable) {
+      return plan;
+    }
+
+    plan.yaw = tools::limit_rad(std::atan2(aim_y, aim_x) + yaw_offset_);
+    plan.pitch = -center_traj.pitch - pitch_offset_;
+
+    const double a_x = best_armor[0];
+    const double a_y = best_armor[1];
+    const double a_z = best_armor[2];
+    const double a_dist = std::hypot(a_x, a_y);
+    const double yaw_i = tools::limit_rad(std::atan2(a_y, a_x) + yaw_offset_);
+
+    auto armor_traj = tools::Trajectory(bullet_speed, a_dist, a_z);
+    if (armor_traj.unsolvable) {
+      return plan;
+    }
+    const double pitch_i = -armor_traj.pitch - pitch_offset_;
+
+    if (armors_num == 3) {
+      if (is_converged) {
+        plan.fire = true;
+      }
+      return plan;
+    }
+
+    const double diff_yaw = calc_incident_yaw_diff(best_armor);
+    const bool is_big_armor = (armors_num == 2);
+    auto [yaw_win, pitch_win] =
+      calc_dynamic_fire_window(best_armor.head<3>().norm(), diff_yaw, is_big_armor, true);
+
+    const double yaw_err = std::abs(tools::limit_rad(plan.yaw - yaw_i));
+    const double pitch_err = std::abs(plan.pitch - pitch_i);
+
+    if (is_converged && yaw_err < yaw_win && pitch_err < pitch_win) {
       plan.fire = true;
+    }
   } catch (const std::exception & e) {
-      tools::logger()->warn("Translation Plan Unsolvable trajectory at hit stage!");
+    tools::logger()->warn("Plan_2 center strategy failed at hit stage!");
   }
 
   return plan;

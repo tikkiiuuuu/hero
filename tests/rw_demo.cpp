@@ -30,7 +30,7 @@ const std::string keys =
     "{config-path c  | configs/standard_rw.yaml | yaml配置文件的路径}"
   "{start-index s  | 0                 | 视频起始帧下标    }"
   "{end-index e    | 0                 | 视频结束帧下标    }"
-  "{@input-path    | assets/demo/demo  | avi和txt文件的路径}";
+  "{@input-path    | assets/demo/demo1  | avi和txt文件的路径}";
 
 int main(int argc, char* argv[]) {
     tools::Exiter exiter;
@@ -157,7 +157,7 @@ int main(int argc, char* argv[]) {
 
         bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
 
-        auto_aim::Plan plan;
+        auto_aim::Plan plan{};
         bool in_recovery_hold = false;
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) 
@@ -268,6 +268,15 @@ int main(int argc, char* argv[]) {
         else {
             plan.control = false; // 处于 LOST 时完全不介入推演
             plan.fire = false;
+            plan.yaw = gimbal_yaw;
+            plan.pitch = gimbal_pitch;
+            plan.yaw_vel = 0.0f;
+            plan.pitch_vel = 0.0f;
+            plan.yaw_acc = 0.0f;
+            plan.pitch_acc = 0.0f;
+            plan.max_window_yaw_err = 0.0;
+            plan.max_window_pitch_err = 0.0;
+            plan.dist = std::hypot(rw_tracker.target_state[0], rw_tracker.target_state[2]);
             has_last_plan = false; // 丢失时重置记录状态
             past_yaw_deltas.clear();   // 清空窗口历史记录
             past_pitch_deltas.clear();
@@ -348,12 +357,13 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        bool final_fire =
-            plan.fire && outpost_middle_ready;
-            // is_center_ready &&
-            // // is_strict_tracking &&
-            // (recovery_frames <= 0) &&
-            // fire_calm;
+        bool final_fire = false;
+        if (rw_tracker.tracked_armors_num == 3) {
+            final_fire = plan.fire && outpost_middle_ready ;
+        } else {
+            final_fire = plan.fire ;
+        }
+        // && fire_calm;
 
         int fire_block_code = 0;
         std::string fire_block_reason = "ALLOW";
@@ -364,13 +374,16 @@ int main(int argc, char* argv[]) {
         } else if (in_recovery_hold) {
             fire_block_code = 2;
             fire_block_reason = "RECOVERY_HOLD";
-        } else if (!outpost_middle_ready) {
+        } else if (rw_tracker.tracked_armors_num == 3 && !outpost_middle_ready) {
             fire_block_code = 6;
             fire_block_reason = "OUTPOST_NOT_MIDDLE";
+        // } else if (!is_center_ready) {
+        //     fire_block_code = 7;
+        //     fire_block_reason = "GIMBAL_NOT_READY";
         } else if (!final_fire) {
             if (is_spinning) {
                 bool not_converged = false;
-                if (rw_tracker.target_state.size() > 10 && rw_tracker.tracked_armors_num == 4) {
+                if (rw_tracker.target_state.size() > 10 ) {
                     const double r1 = rw_tracker.target_state[8];
                     const double r2 = rw_tracker.target_state[10];
                     not_converged = (r1 < 0.15 || r1 > 0.50 || r2 < 0.15 || r2 > 0.50);
@@ -426,10 +439,7 @@ int main(int argc, char* argv[]) {
         data["max_window_pitch_err"] = plan.max_window_pitch_err;
         data["dist"] = plan.dist;
         
-        
-        data["actual_yaw_err"] = actual_yaw_err;
-        data["actual_pitch_err"] = actual_pitch_err;
-        data["fire_block_code"] = fire_block_code;
+   
 
         data["fire_calm"] = fire_calm;
         //data["bullet_speed"] = gimbal.state().bullet_speed;
