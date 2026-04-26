@@ -154,6 +154,8 @@ int main(int argc, char* argv[]) {
         rw_tracker.drawResults(img);
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         data["dt"] = tools::delta_time(t2, t1);
+        const double send_time_s =
+            std::max(0.0, static_cast<double>(time_offset_us.count()) * 1e-6);
 
         bool is_spinning = std::abs(rw_tracker.target_state[7]) > 10;
 
@@ -178,7 +180,7 @@ int main(int argc, char* argv[]) {
                     rw_tracker.target_state,
                     rw_tracker.tracked_armors_num,
                     11.5,
-                    tools::delta_time(t2, t));
+                    send_time_s);
                 plan.control=false;
                 plan.pitch=gimbal_pitch;
                 plan.yaw=gimbal_yaw;
@@ -198,7 +200,7 @@ int main(int argc, char* argv[]) {
                     rw_tracker.target_state,
                     rw_tracker.tracked_armors_num,
                     11.5,
-                    tools::delta_time(t2, t));
+                    send_time_s);
             } 
 
             // 在生成完 plan 后对连续两帧的 plan 进行差值限幅
