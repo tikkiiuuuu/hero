@@ -112,10 +112,15 @@ int main(int argc, char* argv[]) {
         rw_tracker.drawResults(img);
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         data["dt"] = tools::delta_time(t2, t1);
+        const float gimbal_yaw = gimbal.state().yaw;
+        const float gimbal_pitch = gimbal.state().pitch;
+        const bool fire_calm = gimbal.state().fire_calm;
+        const double send_time_s =
+            std::max(0.0, static_cast<double>(time_offset_us.count()) * 1e-6);
 
-        bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
+        bool is_spinning = std::abs(rw_tracker.target_state[7]) > 10;
 
-        auto_aim::Plan plan;
+        auto_aim::Plan plan{};
         bool in_recovery_hold = false;
         if (rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TRACKING ||
             rw_tracker.tracker_state == auto_aim::RWTracker::TrackState::TEMP_LOST) 
@@ -132,27 +137,14 @@ int main(int argc, char* argv[]) {
                 //                         gimbal.state().pitch - MAX_ANGLE_STEP, 
                 //                         gimbal.state().pitch + MAX_ANGLE_STEP);
 
-                // 无论是否在缓冲期，都调用 planner.plan 更新内部状态
-                if(is_spinning){
-                plan = planner.plan_1(
-                rw_tracker.target_state,
-                rw_tracker.tracked_armors_num,
-                11.5,
-                tools::delta_time(t2, t),
-                rw_tracker.getCircleIndex());}
-
-                else{
-                plan = planner.plan_2(
-                rw_tracker.target_state,
-                rw_tracker.tracked_armors_num,
-                11.5,
-                tools::delta_time(t2, t),
-                rw_tracker.getCircleIndex());
-                }
-            ;
+                plan = planner.plan(
+                    rw_tracker.target_state,
+                    rw_tracker.tracked_armors_num,
+                    11.5,
+                    send_time_s);
                 plan.control=false;
-                plan.pitch=gimbal.state().pitch;
-                plan.yaw=gimbal.state().yaw;
+                plan.pitch=gimbal_pitch;
+                plan.yaw=gimbal_yaw;
                 
                 // 刚追踪时速度不可信，直接干掉前馈速度防止疯卷
                 plan.yaw_vel = 0.0f;
@@ -165,28 +157,11 @@ int main(int argc, char* argv[]) {
             }
 
             else{
-                // plan = planner.plan_1(
-                // rw_tracker.target_state,
-                // rw_tracker.tracked_armors_num,
-                // 11.5,
-                // tools::delta_time(t2, t)
-                // );
-                if(is_spinning){
-                plan = planner.plan_1(
-                rw_tracker.target_state,
-                rw_tracker.tracked_armors_num,
-                11.5,
-                tools::delta_time(t2, t),
-                rw_tracker.getCircleIndex());}
-
-                else{
-                plan = planner.plan_2(
-                rw_tracker.target_state,
-                rw_tracker.tracked_armors_num,
-                11.5,
-                tools::delta_time(t2, t),
-                rw_tracker.getCircleIndex());
-                }
+                plan = planner.plan(
+                    rw_tracker.target_state,
+                    rw_tracker.tracked_armors_num,
+                    11.5,
+                    send_time_s);
             } 
 
             // 在生成完 plan 后对连续两帧的 plan 进行差值限幅
@@ -236,6 +211,15 @@ int main(int argc, char* argv[]) {
         else {
             plan.control = false; // 处于 LOST 时完全不介入推演
             plan.fire = false;
+            plan.yaw = gimbal_yaw;
+            plan.pitch = gimbal_pitch;
+            plan.yaw_vel = 0.0f;
+            plan.pitch_vel = 0.0f;
+            plan.yaw_acc = 0.0f;
+            plan.pitch_acc = 0.0f;
+            plan.max_window_yaw_err = 0.0;
+            plan.max_window_pitch_err = 0.0;
+            plan.dist = std::hypot(rw_tracker.target_state[0], rw_tracker.target_state[2]);
             has_last_plan = false; // 丢失时重置记录状态
             past_yaw_deltas.clear();   // 清空窗口历史记录
             past_pitch_deltas.clear();
@@ -316,12 +300,18 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        bool final_fire =
-            plan.fire && outpost_middle_ready;
-            // is_center_ready &&
-            // // is_strict_tracking &&
-            // (recovery_frames <= 0) &&
-            // gimbal.state().fire_calm;
+        bool final_fire = false;
+        if (rw_tracker.tracked_armors_num == 3) {
+            final_fire = plan.fire && outpost_middle_ready && is_center_ready &&
+            is_strict_tracking &&
+            (recovery_frames <= 0) &&
+            fire_calm;
+        } else {
+            final_fire = plan.fire  && is_center_ready &&
+            is_strict_tracking &&
+            (recovery_frames <= 0) &&
+            fire_calm;        }
+        // && fire_calm;
 
         int fire_block_code = 0;
         std::string fire_block_reason = "ALLOW";
@@ -332,28 +322,12 @@ int main(int argc, char* argv[]) {
         } else if (in_recovery_hold) {
             fire_block_code = 2;
             fire_block_reason = "RECOVERY_HOLD";
-        } else if (!outpost_middle_ready) {
+        } else if (rw_tracker.tracked_armors_num == 3 && !outpost_middle_ready) {
             fire_block_code = 6;
             fire_block_reason = "OUTPOST_NOT_MIDDLE";
         } else if (!final_fire) {
-            if (is_spinning) {
-                bool not_converged = false;
-                if (rw_tracker.target_state.size() > 10 && rw_tracker.tracked_armors_num == 4) {
-                    const double r1 = rw_tracker.target_state[8];
-                    const double r2 = rw_tracker.target_state[10];
-                    not_converged = (r1 < 0.15 || r1 > 0.50 || r2 < 0.15 || r2 > 0.50);
-                }
-                if (not_converged) {
-                    fire_block_code = 3;
-                    fire_block_reason = "PLAN1_NOT_CONVERGED";
-                } else {
-                    fire_block_code = 4;
-                    fire_block_reason = "PLAN1_WINDOW_OR_NORMAL";
-                }
-            } else {
-                fire_block_code = 5;
-                fire_block_reason = "PLAN2_NOT_READY";
-            }
+            fire_block_code = 4;
+            fire_block_reason = "MPC_NOT_READY";
         }
 
         if (plan.yaw_vel > 2.5 ){plan.yaw_vel=2.5;};
