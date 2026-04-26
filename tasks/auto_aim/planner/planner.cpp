@@ -416,15 +416,15 @@ Trajectory Planner::get_trajectory_from_state(const Eigen::VectorXd & target_sta
     Trajectory traj;
     // 核心改变：用副本变量 state_copy 替代 EKF
     Eigen::VectorXd state_copy = predict_state(target_state, -DT * (HALF_HORIZON + 1));
-    auto yaw_pitch_last = aim_from_state(state_copy, armor_num, bullet_speed);
+  auto yaw_pitch_last = aim_from_state_2(state_copy, armor_num, bullet_speed);
 
     state_copy = predict_state(state_copy, 2*DT); // [0] = -HALF_HORIZON * DT
-    auto yaw_pitch = aim_from_state(state_copy, armor_num, bullet_speed);
+  auto yaw_pitch = aim_from_state_2(state_copy, armor_num, bullet_speed);
 
     for (int i = 0; i < HORIZON; i++) {
         // 利用自定义推演函数，干干净净向前滚时间
         state_copy = predict_state(state_copy, DT);
-        auto yaw_pitch_next = aim_from_state(state_copy, armor_num, bullet_speed);
+    auto yaw_pitch_next = aim_from_state_2(state_copy, armor_num, bullet_speed);
 
         auto yaw_vel = tools::limit_rad(yaw_pitch_next(0) - yaw_pitch_last(0)) / (2 * DT);
         auto pitch_vel = (yaw_pitch_next(1) - yaw_pitch_last(1)) / (2 * DT);
@@ -729,7 +729,7 @@ Plan Planner::plan(const Eigen::VectorXd& tracker_state, int tracked_armors_num,
   double yaw0;
   Trajectory traj;
   try {
-    yaw0 = aim_from_state(current_state, tracked_armors_num, bullet_speed)(0);
+    yaw0 = aim_from_state_2(current_state, tracked_armors_num, bullet_speed)(0);
       traj = get_trajectory_from_state(current_state, tracked_armors_num, yaw0, bullet_speed);
   } catch (const std::exception & e) {
     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);

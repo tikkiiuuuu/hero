@@ -155,7 +155,7 @@ int main(int argc, char* argv[]) {
         std::chrono::steady_clock::time_point t2 = std::chrono::steady_clock::now();
         data["dt"] = tools::delta_time(t2, t1);
 
-        bool is_spinning = std::abs(rw_tracker.target_state[7]) > 1;
+        bool is_spinning = std::abs(rw_tracker.target_state[7]) > 10;
 
         auto_aim::Plan plan{};
         bool in_recovery_hold = false;
@@ -174,21 +174,11 @@ int main(int argc, char* argv[]) {
                 //                         gimbal.state().pitch - MAX_ANGLE_STEP, 
                 //                         gimbal.state().pitch + MAX_ANGLE_STEP);
 
-                if (is_spinning) {
-                    plan = planner.plan_1(
-                        rw_tracker.target_state,
-                        rw_tracker.tracked_armors_num,
-                        11.5,
-                        tools::delta_time(t2, t),
-                        rw_tracker.getCircleIndex());
-                } else {
-                    plan = planner.plan_2(
-                        rw_tracker.target_state,
-                        rw_tracker.tracked_armors_num,
-                        11.5,
-                        tools::delta_time(t2, t),
-                        rw_tracker.getCircleIndex());
-                }
+                plan = planner.plan(
+                    rw_tracker.target_state,
+                    rw_tracker.tracked_armors_num,
+                    11.5,
+                    tools::delta_time(t2, t));
                 plan.control=false;
                 plan.pitch=gimbal_pitch;
                 plan.yaw=gimbal_yaw;
@@ -204,21 +194,11 @@ int main(int argc, char* argv[]) {
             }
 
             else{
-                if (is_spinning) {
-                    plan = planner.plan_1(
-                        rw_tracker.target_state,
-                        rw_tracker.tracked_armors_num,
-                        11.5,
-                        tools::delta_time(t2, t),
-                        rw_tracker.getCircleIndex());
-                } else {
-                    plan = planner.plan_2(
-                        rw_tracker.target_state,
-                        rw_tracker.tracked_armors_num,
-                        11.5,
-                        tools::delta_time(t2, t),
-                        rw_tracker.getCircleIndex());
-                }
+                plan = planner.plan(
+                    rw_tracker.target_state,
+                    rw_tracker.tracked_armors_num,
+                    11.5,
+                    tools::delta_time(t2, t));
             } 
 
             // 在生成完 plan 后对连续两帧的 plan 进行差值限幅
@@ -381,24 +361,8 @@ int main(int argc, char* argv[]) {
         //     fire_block_code = 7;
         //     fire_block_reason = "GIMBAL_NOT_READY";
         } else if (!final_fire) {
-            if (is_spinning) {
-                bool not_converged = false;
-                if (rw_tracker.target_state.size() > 10 ) {
-                    const double r1 = rw_tracker.target_state[8];
-                    const double r2 = rw_tracker.target_state[10];
-                    not_converged = (r1 < 0.15 || r1 > 0.50 || r2 < 0.15 || r2 > 0.50);
-                }
-                if (not_converged) {
-                    fire_block_code = 3;
-                    fire_block_reason = "PLAN1_NOT_CONVERGED";
-                } else {
-                    fire_block_code = 4;
-                    fire_block_reason = "PLAN1_WINDOW_OR_NORMAL";
-                }
-            } else {
-                fire_block_code = 5;
-                fire_block_reason = "PLAN2_NOT_READY";
-            }
+            fire_block_code = 4;
+            fire_block_reason = "MPC_NOT_READY";
         }
 
         data["plan_yaw"] = plan.yaw;
