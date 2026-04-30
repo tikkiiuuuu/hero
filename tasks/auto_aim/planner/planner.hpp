@@ -128,8 +128,18 @@ public:
   
   //Plan plan(const Eigen::VectorXd& tracker_state, int tracked_armors_num, double bullet_speed, double send_time);
   //Plan plan(const Eigen::VectorXd& tracker_state, int tracked_armors_num, double bullet_speed, double send_time);
-  Trajectory get_trajectory_from_state(const Eigen::VectorXd & target_state, int armor_num, double yaw0, double bullet_speed);
+  Trajectory get_trajectory_from_state(
+    const Eigen::VectorXd & target_state,
+    int armor_num,
+    double yaw0,
+    double bullet_speed,
+    bool use_center_aim);
   Eigen::Matrix<double, 2, 1> aim_from_state(const Eigen::VectorXd & state_x, int armor_num, double bullet_speed);
+  Eigen::Matrix<double, 2, 1> aim_from_state_nearest(
+    const Eigen::VectorXd & state_x,
+    int armor_num,
+    double bullet_speed,
+    int circle_index = 0);
 
   Eigen::Matrix<double, 2, 1> aim_from_state_2(const Eigen::VectorXd & state_x, int armor_num, double bullet_speed, int circle_index = 0);
 

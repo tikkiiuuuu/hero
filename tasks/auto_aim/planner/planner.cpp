@@ -22,6 +22,8 @@ constexpr double kArmorHeight = 0.050;
 constexpr double kMinEnableYaw = 0.0087;   // 0.5 deg
 constexpr double kMinEnablePitch = 0.0061; // 0.35 deg
 constexpr double kPitchFactor = 0.9659258262890683; // cos(15 deg)
+constexpr double kStationarySpeed = 0.15; // m/s, threshold for stationary target
+constexpr double kSmallSpinSpeed = 1.0; // rad/s, threshold for small gyro
 
 inline std::pair<double, double> calc_dynamic_fire_window(
   double distance,
@@ -410,21 +412,70 @@ Eigen::Matrix<double, 2, 1> Planner::aim_from_state(
   };
 }
 
+Eigen::Matrix<double, 2, 1> Planner::aim_from_state_nearest(
+  const Eigen::VectorXd & state_x,
+  int armor_num,
+  double bullet_speed,
+  int circle_index)
+{
+  auto armor_list = compute_armor_xyza(state_x, armor_num, circle_index);
 
-Trajectory Planner::get_trajectory_from_state(const Eigen::VectorXd & target_state, int armor_num, double yaw0, double bullet_speed)
+  int best_id = -1;
+  double min_dist = 1e10;
+  for (int i = 0; i < armor_num; i++) {
+    const auto &xyza = armor_list[i];
+    const double dist = xyza.head<2>().norm();
+    if (dist < min_dist) {
+      min_dist = dist;
+      best_id = i;
+    }
+  }
+
+  if (best_id < 0) {
+    throw std::runtime_error("No armor selected!");
+  }
+
+  const auto &best_xyza = armor_list[best_id];
+  Eigen::Vector3d xyz(best_xyza[0], best_xyza[1], best_xyza[2]);
+  debug_xyza = Eigen::Vector4d(xyz.x(), xyz.y(), xyz.z(), best_xyza[3]);
+
+  const double azim = std::atan2(xyz.y(), xyz.x());
+  auto bullet_traj = tools::Trajectory(bullet_speed, min_dist, xyz.z());
+  if (bullet_traj.unsolvable) {
+    throw std::runtime_error("Unsolvable bullet trajectory!");
+  }
+
+  return {
+    tools::limit_rad(azim + yaw_offset_),
+    -bullet_traj.pitch - pitch_offset_
+  };
+}
+
+
+Trajectory Planner::get_trajectory_from_state(
+  const Eigen::VectorXd & target_state,
+  int armor_num,
+  double yaw0,
+  double bullet_speed,
+  bool use_center_aim)
 {
     Trajectory traj;
     // 核心改变：用副本变量 state_copy 替代 EKF
     Eigen::VectorXd state_copy = predict_state(target_state, -DT * (HALF_HORIZON + 1));
-  auto yaw_pitch_last = aim_from_state_2(state_copy, armor_num, bullet_speed);
+  auto aim_state = [&](const Eigen::VectorXd & state) {
+    return use_center_aim ?
+      aim_from_state_2(state, armor_num, bullet_speed) :
+      aim_from_state_nearest(state, armor_num, bullet_speed);
+  };
+  auto yaw_pitch_last = aim_state(state_copy);
 
     state_copy = predict_state(state_copy, 2*DT); // [0] = -HALF_HORIZON * DT
-  auto yaw_pitch = aim_from_state_2(state_copy, armor_num, bullet_speed);
+  auto yaw_pitch = aim_state(state_copy);
 
     for (int i = 0; i < HORIZON; i++) {
         // 利用自定义推演函数，干干净净向前滚时间
         state_copy = predict_state(state_copy, DT);
-    auto yaw_pitch_next = aim_from_state_2(state_copy, armor_num, bullet_speed);
+    auto yaw_pitch_next = aim_state(state_copy);
 
         auto yaw_vel = tools::limit_rad(yaw_pitch_next(0) - yaw_pitch_last(0)) / (2 * DT);
         auto pitch_vel = (yaw_pitch_next(1) - yaw_pitch_last(1)) / (2 * DT);
@@ -702,7 +753,15 @@ Eigen::Matrix<double, 2, 1> Planner::aim_from_state_2(
 Plan Planner::plan(const Eigen::VectorXd& tracker_state, int tracked_armors_num, double bullet_speed, double send_time)
 {
 
-  bool is_spinning = std::abs(tracker_state[7]) > decision_speed_;
+  const double vx = tracker_state.size() > 1 ? tracker_state[1] : 0.0;
+  const double vy = tracker_state.size() > 3 ? tracker_state[3] : 0.0;
+  const double linear_speed = std::hypot(vx, vy);
+
+  const double omega = tracker_state.size() > 7 ? std::abs(tracker_state[7]) : 0.0;
+  const bool is_spinning = omega > decision_speed_;
+  const bool is_small_spin = omega > kSmallSpinSpeed;
+  const bool is_moving = linear_speed > kStationarySpeed;
+  const bool use_center_aim = is_small_spin || is_moving;
   double delay_time = is_spinning ? high_speed_delay_time_ : low_speed_delay_time_;   //delay_time是高速小陀螺下的电控机械的各种延时，包括拨弹延时
   // auto future = std::chrono::steady_clock::now() + std::chrono::microseconds(int(delay_time * 1e6));
     //非高速小陀螺状态下 不考虑拨弹延时 固定电控通信延时
@@ -729,8 +788,12 @@ Plan Planner::plan(const Eigen::VectorXd& tracker_state, int tracked_armors_num,
   double yaw0;
   Trajectory traj;
   try {
-    yaw0 = aim_from_state_2(current_state, tracked_armors_num, bullet_speed)(0);
-      traj = get_trajectory_from_state(current_state, tracked_armors_num, yaw0, bullet_speed);
+    if (use_center_aim) {
+      yaw0 = aim_from_state_2(current_state, tracked_armors_num, bullet_speed)(0);
+    } else {
+      yaw0 = aim_from_state_nearest(current_state, tracked_armors_num, bullet_speed)(0);
+    }
+    traj = get_trajectory_from_state(current_state, tracked_armors_num, yaw0, bullet_speed, use_center_aim);
   } catch (const std::exception & e) {
     tools::logger()->warn("Unsolvable target {:.2f}", bullet_speed);
     return {false};

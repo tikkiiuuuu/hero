@@ -348,11 +348,11 @@ bool Detector::check_name(const Armor & armor) const
   auto name_ok = armor.name != ArmorName::not_armor;
   auto confidence_ok = armor.confidence > min_confidence_;
 
-  // 保存不确定的图案，用于分类器的迭代
-  if (name_ok && !confidence_ok) save(armor);
+  // // 保存不确定的图案，用于分类器的迭代
+  // if (name_ok && !confidence_ok) save(armor);
 
-  // 出现 5号 则显示 debug 信息。但不过滤。
-  if (armor.name == ArmorName::five) tools::logger()->debug("See pattern 5");
+  // // 出现 5号 则显示 debug 信息。但不过滤。
+  // if (armor.name == ArmorName::five) tools::logger()->debug("See pattern 5");
 
   return name_ok && confidence_ok;
 }
@@ -363,12 +363,12 @@ bool Detector::check_type(const Armor & armor) const
                    ? (armor.name != ArmorName::one && armor.name != ArmorName::base)
                    : (armor.name == ArmorName::one || armor.name == ArmorName::base);
 
-  // 保存异常的图案，用于分类器的迭代
-  if (!name_ok) {
-    tools::logger()->debug(
-      "see strange armor: {} {}", ARMOR_TYPES[armor.type], ARMOR_NAMES[armor.name]);
-    save(armor);
-  }
+  // // 保存异常的图案，用于分类器的迭代
+  // if (!name_ok) {
+  //   tools::logger()->debug(
+  //     "see strange armor: {} {}", ARMOR_TYPES[armor.type], ARMOR_NAMES[armor.name]);
+  //   save(armor);
+  // }
 
   return name_ok;
 }
