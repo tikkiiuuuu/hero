@@ -6,9 +6,9 @@ find_package(OpenVINO REQUIRED COMPONENTS Runtime)
 
 add_subdirectory(planner/tinympc)
 
-add_library(auto_aim OBJECT 
+set(AUTO_AIM_SOURCES
     armor.cpp
-    classifier.cpp 
+    classifier.cpp
     detector.cpp
     solver.cpp
     aimer.cpp
@@ -26,4 +26,12 @@ add_library(auto_aim OBJECT
     planner/planner.cpp
 )
 
+add_library(auto_aim OBJECT ${AUTO_AIM_SOURCES})
+add_library(auto_aim_no_rw OBJECT
+    ${AUTO_AIM_SOURCES}
+)
+# Remove rw_tracker.cpp from auto_aim_no_rw
+list(REMOVE_ITEM auto_aim_no_rw rw_tracker.cpp)
+
 target_link_libraries(auto_aim io openvino::runtime tinympcstatic ruckig::ruckig)
+target_link_libraries(auto_aim_no_rw io openvino::runtime tinympcstatic ruckig::ruckig)

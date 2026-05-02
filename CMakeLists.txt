@@ -75,6 +75,11 @@ add_executable(uav_debug src/uav_debug.cpp)
 add_executable(sentry_ul src/sentry_ul.cpp)
 target_link_libraries(sentry_ul ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tools io)
 
+# rw_tracker_1: standalone tracker implementation build for testing/debugging
+add_library(rw_tracker_1 STATIC tasks/auto_aim/rw_tracker_1.cpp)
+target_include_directories(rw_tracker_1 PRIVATE ${PROJECT_SOURCE_DIR}/tasks/auto_aim)
+target_link_libraries(rw_tracker_1 PRIVATE ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io ${CERES_LIBRARIES})
+
 target_link_libraries(standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io )
 # target_link_libraries(mt_standard ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
 target_link_libraries(standard_mpc ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim auto_buff tools io)
@@ -148,7 +153,7 @@ target_link_libraries(gimbal_test ${OpenCV_LIBS} fmt::fmt yaml-cpp auto_aim tool
 
 target_link_libraries(hero ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
 target_link_libraries(mt_rw_tracker_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
-target_link_libraries(rw_demo ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
+target_link_libraries(rw_demo ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim_no_rw rw_tracker_1)
 target_link_libraries(rw_aim_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
 target_link_libraries(latency_test ${OpenCV_LIBS} fmt::fmt yaml-cpp tools io auto_aim)
 

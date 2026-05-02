@@ -19,9 +19,9 @@ namespace auto_aim {
  * 另外由于不希望将target和tracker分开，这里实现了ShowTargetInterface接口，方便planner使用
 ***********************************************************************************************************************/
 class RWTracker {
-    using Light = auto_aim::Lightbar;
     //! 为了保持兼容，先用别名暂时适配
 public:
+    using Light = auto_aim::Lightbar;
     /************************************************************************************************************************
     * @brief 面向planner的接口，因为planner需要部分target的功能
     * 我们暂时只对他要求的接口进行实现
@@ -49,6 +49,17 @@ public:
 
         // mutable std::chrono::steady_clock::time_point last_predict_time_;
     };
+    // unique 版本的接口，返回更完整的 state
+    class ShowTargetInterfaceUnique {
+    public:
+        ShowTargetInterfaceUnique():tracker_(nullptr) {};
+        explicit ShowTargetInterfaceUnique(RWTracker& tracker):tracker_(&tracker) {};
+        ~ShowTargetInterfaceUnique() = default;
+        const Eigen::VectorXd& get_state() const;
+        RWTracker* tracker_;
+        Eigen::VectorXd state_;
+        tools::RWExtendedKalmanFilter ekf_;
+    };
     enum MatchType {
         NONE,
         LIGHT_LEFT,
@@ -62,6 +73,7 @@ public:
     void tracker_loop();
     //!因为要获取灯条目前先用传统方法
     void update(const std::list<Armor>& armors, std::list<Light> light_array);
+    void update_ceres(const std::list<Armor>& armors, std::list<Light> light_array);
     void updateTrackedArmorsNum(const Armor& armor);
     double getError_Distance(const Eigen::VectorXd & predict_points, const Eigen::VectorXd & measure_points);
     double getError_Angle(const Eigen::VectorXd & predict_points, const Eigen::VectorXd & measure_points);
@@ -72,6 +84,7 @@ public:
     void drawResults(cv::Mat & img);
     void set_enemy_color(uint8_t enemycolor);
     ShowTargetInterface& get_interface();
+    ShowTargetInterfaceUnique& get_interface_unique();
     int getCircleIndex() const { return circle_index; }  // 获取前哨站当前装甲板索引
 
     double dt_;//! 在图像回调中计算
@@ -95,7 +108,11 @@ public:
     
     
     struct EkfSigam2Params {
-        double q_xyz, q_yaw, q_r;
+        double q_xyz;
+        double q_xy;
+        double q_z;
+        double q_yaw;
+        double q_r;
         double r_u, r_v;
     };
     struct MatchArmor {
@@ -127,6 +144,52 @@ public:
     tools::RWExtendedKalmanFilter ekf;
     Solver & solver;
     Color enemy_color_;
+
+    // 新增：用于一致性遮挡调试的数据结构
+    struct ConsistentOcclusionDebugInfo {
+        bool valid = false;
+        double cos_side_left = 0.0, cos_side_right = 0.0;
+        double cos_extend_left = 0.0, cos_extend_right = 0.0;
+        double alpha_occ_left = 0.0, alpha_occ_right = 0.0;
+        double alpha_ext_left = 0.0, alpha_ext_right = 0.0;
+        double side_offset_left = 0.0, side_offset_right = 0.0;
+        double up_offset_left = 0.0, up_offset_right = 0.0;
+        double forward_offset_left = 0.0, forward_offset_right = 0.0;
+        int armor_id = -1;
+        int match_type = 0;
+        double theta = 0.0;
+        double r = 0.0;
+        double z = 0.0;
+        Eigen::MatrixXd jh;
+        Eigen::MatrixXd djh;
+        double jh_norm = 0.0;
+        double jh_max_abs = 0.0;
+        double djh_norm = 0.0;
+        double djh_max_abs = 0.0;
+    };
+
+    // 切换使用一致性遮挡模型
+    bool use_consistent_occlusion_model_ = false;
+    // 填充的一致性遮挡调试信息
+    ConsistentOcclusionDebugInfo consistent_occlusion_debug_;
+    const ConsistentOcclusionDebugInfo& consistent_occlusion_debug() const;
+
+    // 额外的 state / 接口（完整16维）
+    Eigen::VectorXd target_state_unique;
+    ShowTargetInterfaceUnique show_target_interface_unique_;
+
+    // 最近一次真实预测时间
+    std::chrono::steady_clock::time_point last_true_predict_time_;
+
+    // YAML 参数
+    double r_distance = 1.0;
+
+    // Ceres 版本的观测函数（声明）
+    Eigen::VectorXd Singal_Armor_h_ceres(const Eigen::VectorXd& x, int armor_id, MatchType match_type);
+    Eigen::MatrixXd Singal_Armor_jh_ceres(const Eigen::VectorXd& x, int armor_id, MatchType match_type);
+    Eigen::VectorXd Singal_Armor_h_ceres_consis(const Eigen::VectorXd& x, int armor_id, MatchType match_type);
+    Eigen::MatrixXd Singal_Armor_jh_ceres_consis(const Eigen::VectorXd& x, int armor_id, MatchType match_type);
+    Eigen::MatrixXd last_consistent_occlusion_jh_;
 
     /* ---------------------------------------- 变量 --------------------------------------------- */
     // 阈值
