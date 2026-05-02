@@ -29,12 +29,22 @@ inline std::pair<double, double> calc_dynamic_fire_window(
   double distance,
   double diff_yaw,
   bool is_big_armor,
-  bool center_mode)
+  bool center_mode,
+  bool is_base = false)
 {
   const double safe_dist = std::max(distance, 0.3);
-  const double armor_w = is_big_armor ? kLargeArmorWidth : kSmallArmorWidth;
+  double armor_w = is_big_armor ? kLargeArmorWidth : kSmallArmorWidth;
+  double armor_h = kArmorHeight;
+  
+  // 基地特殊处理：未展开时装甲板大小与前哨站相同，但倾斜角度较大
+  if (is_base) {
+    // 基地未展开时为小装甲板，但由于倾斜角度大，需要增加有效高度
+    armor_w = kSmallArmorWidth;        // 基地未展开时为小装甲板宽度
+    armor_h = kArmorHeight * 1.5;      // 增加50%的高度以适应倾斜
+  }
+  
   double yaw_window = std::abs(std::atan2(armor_w * 0.5, safe_dist));
-  double pitch_window = std::abs(std::atan2(kArmorHeight * 0.5, safe_dist));
+  double pitch_window = std::abs(std::atan2(armor_h * 0.5, safe_dist));
 
   double yaw_factor = std::cos(diff_yaw);
   if (center_mode) {
@@ -317,6 +327,23 @@ std::vector<Eigen::Vector4d> Planner::compute_armor_xyza(const Eigen::VectorXd &
     double yc = state_x[2];
     double theta = state_x[6];
 
+    // 基地只有一块装甲板的特殊处理
+    if (armor_num == 1) {
+        // 基地装甲板与整车中心的距离和高度
+        double r = state_x.size() > 8 ? state_x[8] : 0.25;  // 基地默认半径约0.25m
+        double z = state_x.size() > 4 ? state_x[4] : 0.0;   // 基地装甲板高度
+        
+        // 基地装甲板方向与整车朝向相同或相反（根据倾斜情况调整）
+        // 这里假设基地装甲板朝向正前方，需要根据实际情况调整
+        double armor_theta = theta;
+        
+        double armor_x = xc + r * std::cos(armor_theta);
+        double armor_y = yc + r * std::sin(armor_theta);
+        
+        res.push_back({armor_x, armor_y, z, armor_theta});
+        return res;
+    }
+
     for (int i = 0; i < armor_num; i++) {
         double armor_theta = tools::limit_rad(theta + i * 2 * CV_PI / armor_num);
         double r, z;
@@ -545,7 +572,8 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   }
 
   const auto & best_armor = hit_armors[best_idx];
-  if (armors_num != 3 && !is_armor_facing_camera(best_armor)) {
+  // 基地只有一块装甲板，不需要检查是否朝向摄像头
+  if (armors_num != 3 && armors_num != 1 && !is_armor_facing_camera(best_armor)) {
     return plan;
   }
 
@@ -561,12 +589,28 @@ Plan Planner::plan_1(const Eigen::VectorXd& tracker_state, int armors_num, doubl
   }
 
   const double pitch_i = -armor_traj.pitch - pitch_offset_;
+  // 基地只有一块装甲板，不需要后续的hit检验
   if (armors_num == 3) {
     if (is_converged) {
       plan.fire = true;
     }
     return plan;
   }
+  // 基地的特殊处理：倾斜角度较大
+  if (armors_num == 1) {
+    const double diff_yaw = calc_incident_yaw_diff(best_armor);
+    auto [yaw_win, pitch_win] =
+      calc_dynamic_fire_window(best_armor.head<3>().norm(), diff_yaw, false, false, true);  // is_base = true
+
+    const double yaw_err = std::abs(tools::limit_rad(plan.yaw - yaw_i));
+    const double pitch_err = std::abs(plan.pitch - pitch_i);
+
+    if (yaw_err < yaw_win && pitch_err < pitch_win) {
+      plan.fire = true;
+    }
+    return plan;
+  }
+  
   const double diff_yaw = (armors_num == 3) ? 0.0 : calc_incident_yaw_diff(best_armor);
   const bool is_big_armor = (armors_num == 2);
   auto [yaw_win, pitch_win] =
@@ -646,7 +690,8 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
     }
 
     const auto & best_armor = hit_armors[best_idx];
-    if (armors_num != 3 && !is_armor_facing_camera(best_armor)) {
+    // 基地只有一块装甲板，不需要检查是否朝向摄像头
+    if (armors_num != 3 && armors_num != 1 && !is_armor_facing_camera(best_armor)) {
       return plan;
     }
 
@@ -657,7 +702,15 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
     const double armor_to_center = std::hypot(best_armor[0] - center_x, best_armor[1] - center_y);
 
     // 按 whole-car-center 思路，把瞄点放在“中心线向相机回退一个装甲半径”的位置。
-    const double aim_dist = std::max(0.05, center_dist - armor_to_center);
+    // 基地特殊处理：直接瞄准装甲板中心，不需要偏移
+    double aim_dist;
+    if (armors_num == 1) {
+      const double base_a_x = best_armor[0];
+      const double base_a_y = best_armor[1];
+      aim_dist = std::hypot(base_a_x, base_a_y);
+    } else {
+      aim_dist = std::max(0.05, center_dist - armor_to_center);
+    }
     const double aim_x = aim_dist * std::cos(center_yaw);
     const double aim_y = aim_dist * std::sin(center_yaw);
     const double aim_z = best_armor[2];
@@ -684,6 +737,21 @@ Plan Planner::plan_2(const Eigen::VectorXd& tracker_state, int armors_num, doubl
 
     if (armors_num == 3) {
       if (is_converged) {
+        plan.fire = true;
+      }
+      return plan;
+    }
+
+    // 基地的特殊处理：倾斜角度较大
+    if (armors_num == 1) {
+      const double diff_yaw = calc_incident_yaw_diff(best_armor);
+      auto [yaw_win, pitch_win] =
+        calc_dynamic_fire_window(best_armor.head<3>().norm(), diff_yaw, false, true, true);  // is_base = true, center_mode = true
+
+      const double yaw_err = std::abs(tools::limit_rad(plan.yaw - yaw_i));
+      const double pitch_err = std::abs(plan.pitch - pitch_i);
+
+      if (yaw_err < yaw_win && pitch_err < pitch_win) {
         plan.fire = true;
       }
       return plan;

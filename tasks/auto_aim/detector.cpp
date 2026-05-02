@@ -128,7 +128,7 @@ std::pair<std::list<Armor>, std::list<Lightbar>> Detector::detect_light(const cv
   // 进行二值化
   cv::Mat binary_img;
   cv::threshold(gray_img, binary_img, threshold_, 255, cv::THRESH_BINARY);
-  cv::imshow("binary_img", binary_img);
+  // cv::imshow("binary_img", binary_img);
 
   // 获取轮廓点
   std::vector<std::vector<cv::Point>> contours;
